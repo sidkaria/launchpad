@@ -1,0 +1,1910 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Mission Control — launchpad</title>
+<!-- Inline, like every other icon here: the page must render with no network. -->
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Crect width='24' height='24' rx='5' fill='%230B0D11'/%3E%3Cpath d='M6.4 15.4c-1.1 1.1-1.5 4.2-1.5 4.2s3.1-.4 4.2-1.5M10 15.6L8.4 14c0-5 3.3-8.2 8-8.2 4.4 0 4.4 0 4.4 0s0 4.9-4.9 7.9l-2.4 2.4' stroke='%234FE3C1' stroke-width='1.7' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
+<style>
+/* Shipped pre-built and hand-written. Claude never regenerates this file:
+   N customers must get one consistent UI, not N inconsistent ones.
+   Icons are authored inline (see the <svg> sprite) rather than pulled from a
+   CDN — the page must work with no network at all. */
+/* One elevation ladder, and it only ever goes UP.
+   A nested surface that is DARKER than its parent reads as a hole punched in
+   the card rather than an element sitting on it — which is what made every
+   panel look like an internal tool. e0 is the page, e1 a card on it, e2 a card
+   inside that, e3 hover and inputs. Code wells are the one deliberate
+   exception: those are meant to look inset. */
+:root{
+  --e0:#0B0D11; --e1:#13161C; --e2:#1A1E26; --e3:#222732;
+  --line:#242932; --line2:#333A47;
+  --ink:#EDF1F8; --muted:#98A2B3; --faint:#69737F;
+  --acc:#4FE3C1; --acc2:#5B9DFF; --acc-soft:rgba(79,227,193,.12);
+  --ok:#4ED88F; --gap:#FF6F5E; --warn:#FFC85C; --na:#262C36;
+  --glow:0 0 0 1px rgba(79,227,193,.3), 0 0 24px -8px rgba(79,227,193,.55);
+  /* Overlays only. On near-black a large soft shadow is just haze; depth here
+     comes from the luminance step and a hairline. */
+  --shadow:0 16px 48px -16px rgba(0,0,0,.7);
+  --hair:inset 0 1px 0 rgba(255,255,255,.035);
+  --r-sm:8px; --r:12px; --r-lg:16px;
+  /* ── type ──────────────────────────────────────────────────────────────
+     Two faces, both resolved locally. No @font-face and no link to a font
+     CDN: this page must render identically on a laptop with no network, and
+     a dashboard that waits on fonts.googleapis.com before it can be read is
+     a dashboard that is broken on a plane. Nothing is bundled either —
+     redistributing a typeface inside a product that is sold needs a licence
+     for exactly that, and the ones permissive enough are not obviously
+     better than what is already installed.
+
+     So: a chain whose HEAD is a real grotesk on every platform it can be,
+     rather than the literal system default the audit found. Inter Tight or
+     Inter if the machine has them (many developer machines do), then Neue
+     Haas Grotesk / Helvetica Neue on macOS, Segoe UI Variable Display on
+     Windows, Roboto on Linux. Arial is the floor, and it is still a grotesk.
+     The mono leads with the ones a developer installs on purpose. */
+  --sans:"Inter Tight",Inter,"Neue Haas Grotesk Display","Helvetica Neue",
+    "Segoe UI Variable Display","Segoe UI",Roboto,"Nimbus Sans","Liberation Sans",Arial,sans-serif;
+  --mono:"Berkeley Mono","JetBrains Mono","IBM Plex Mono",ui-monospace,SFMono-Regular,"SF Mono",
+    Menlo,"DejaVu Sans Mono",Consolas,monospace;
+  /* One rhythm. Every vertical gap on the page is a multiple of 4. */
+  --s1:4px; --s2:8px; --s3:12px; --s4:16px; --s5:24px; --s6:32px; --s7:44px;
+}
+/* Light applies when the OS asks for it and the user has not overridden, or
+   when the user picked it explicitly. One declaration block, two selectors, so
+   the manual toggle and the OS preference can never disagree about a value. */
+@media (prefers-color-scheme: light){ :root:not([data-theme=dark]){
+    --e0:#EAEFF6; --e1:#FFFFFF; --e2:#F5F8FC; --e3:#E9EEF6;
+    --line:#D8E0EC; --line2:#BCC8D9;
+    --ink:#10161F; --muted:#5A6575; --faint:#8A94A3;
+    --acc:#0D8E7C; --acc2:#2F6BE0; --acc-soft:rgba(13,142,124,.10);
+    --ok:#17915C; --gap:#CE3D29; --warn:#A8700C; --na:#E6EAF1;
+    --glow:0 0 0 1px rgba(13,142,124,.28), 0 0 20px -10px rgba(13,142,124,.5);
+    --shadow:0 16px 44px -18px rgba(16,22,31,.28);
+    --hair:inset 0 1px 0 rgba(255,255,255,.7);
+  } }
+:root[data-theme=light]{
+    --e0:#EAEFF6; --e1:#FFFFFF; --e2:#F5F8FC; --e3:#E9EEF6;
+    --line:#D8E0EC; --line2:#BCC8D9;
+    --ink:#10161F; --muted:#5A6575; --faint:#8A94A3;
+    --acc:#0D8E7C; --acc2:#2F6BE0; --acc-soft:rgba(13,142,124,.10);
+    --ok:#17915C; --gap:#CE3D29; --warn:#A8700C; --na:#E6EAF1;
+    --glow:0 0 0 1px rgba(13,142,124,.28), 0 0 20px -10px rgba(13,142,124,.5);
+    --shadow:0 16px 44px -18px rgba(16,22,31,.28);
+    --hair:inset 0 1px 0 rgba(255,255,255,.7);
+  }
+*{box-sizing:border-box}
+html,body{height:100%}
+body{
+  margin:0;color:var(--ink);
+  font:420 14.5px/1.6 var(--sans);
+  -webkit-font-smoothing:antialiased;
+  /* A grotesk with the figures aligned: every number on this page sits in a
+     column with another number, and proportional digits make them wobble. */
+  font-variant-numeric:tabular-nums;
+  font-feature-settings:"tnum" 1,"cv05" 1,"ss01" 1;
+  background:
+    radial-gradient(120% 80% at 50% -10%, color-mix(in srgb,var(--acc) 5%,transparent), transparent 60%),
+    var(--e0);
+  background-attachment:fixed;
+}
+/* Optical sizing by hand: a grotesk needs to tighten as it grows and open up
+   as it shrinks, and none of the fallbacks in the chain do it themselves. */
+h1,h2,h3,h4{margin:0;font-weight:700;letter-spacing:-.025em}
+button{font:inherit;color:inherit;cursor:pointer;border:0;background:none;text-align:left}
+code{font-family:var(--mono)}
+svg.i{width:16px;height:16px;flex:0 0 auto;stroke:currentColor;fill:none;
+  stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round}
+svg.i.lg{width:20px;height:20px}
+svg.i.sm{width:13px;height:13px}
+.mono{font-family:var(--mono);font-variant-numeric:tabular-nums}
+/* The signature micro-label: mono, uppercase, wide. Used everywhere a field
+   needs naming without competing with the value. */
+.lbl{font-family:var(--mono);font-size:10px;text-transform:uppercase;letter-spacing:.13em;
+  color:var(--faint);font-weight:500}
+
+@keyframes rise{from{opacity:0;transform:translateY(9px)}to{opacity:1;transform:none}}
+@keyframes fade{from{opacity:0}to{opacity:1}}
+.rise{animation:rise .38s cubic-bezier(.22,.9,.28,1) both}
+@media (prefers-reduced-motion:reduce){.rise{animation:none}*{transition:none!important}}
+
+.shell{display:flex;min-height:100vh;position:relative}
+
+/* ── sidebar ─────────────────────────────────────────────────────────── */
+aside.nav{width:274px;flex:0 0 274px;background:var(--e0);
+  border-right:1px solid var(--line);display:flex;flex-direction:column;position:sticky;
+  top:var(--topbar,0px);height:calc(100vh - var(--topbar,0px));
+  overflow-y:auto;backdrop-filter:blur(8px)}
+.brand{padding:19px 18px 15px;display:flex;align-items:center;gap:10px}
+.mark{width:30px;height:30px;border-radius:var(--r-sm);display:grid;place-items:center;color:var(--acc);
+  background:var(--e2);border:1px solid var(--line2)}
+.mark svg{width:17px;height:17px;stroke:currentColor;stroke-width:2.1;fill:none;
+  stroke-linecap:round;stroke-linejoin:round}
+.brand b{font-size:15px;letter-spacing:-.03em;display:block;line-height:1.1}
+.brand span{font-size:9.5px;color:var(--faint);text-transform:uppercase;letter-spacing:.16em;font-family:var(--mono)}
+.navsec{padding:14px 18px 6px;display:flex;align-items:center;gap:7px}
+.navitem{display:flex;align-items:center;gap:11px;padding:9px 11px;border-radius:var(--r-sm);margin:2px 9px;
+  width:calc(100% - 18px);position:relative;transition:background .14s,box-shadow .14s}
+.navitem:hover{background:var(--e2)}
+.navitem[aria-current=true]{background:var(--e2);box-shadow:inset 0 0 0 1px var(--line2)}
+.navitem[aria-current=true]::before{content:"";position:absolute;left:-9px;top:50%;transform:translateY(-50%);
+  width:3px;height:20px;border-radius:0 3px 3px 0;background:linear-gradient(var(--acc),var(--acc2))}
+.navitem .nm{flex:1;min-width:0;font-size:13.5px;font-weight:560;white-space:nowrap;overflow:hidden;
+  text-overflow:ellipsis;letter-spacing:-.01em}
+.navitem .sub{font-size:10.5px;color:var(--faint);display:flex;align-items:center;gap:5px;font-weight:420;
+  margin-top:2px;font-family:var(--mono);letter-spacing:.02em}
+.navitem .meter{margin-top:5px}
+.navfoot{margin-top:auto;padding:15px 18px;border-top:1px solid var(--line);display:grid;gap:7px}
+.navfoot .row{display:flex;align-items:center;gap:8px;font-size:11.5px;color:var(--muted)}
+.themebtn{display:flex;align-items:center;gap:8px;margin:0 9px 12px;padding:8px 11px;border-radius:var(--r-sm);
+  font-size:11.5px;color:var(--muted);font-family:var(--mono);letter-spacing:.03em;
+  border:1px solid var(--line);background:var(--e1);transition:background .14s,color .14s}
+.themebtn:hover{background:var(--e2);color:var(--ink)}
+/* Live status. The pulse is the only thing on the page that moves on its own,
+   which is the point: it means something is happening right now. */
+@keyframes pulse{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.35;transform:scale(.82)}}
+.livedot{width:7px;height:7px;border-radius:50%;background:var(--ok);flex:0 0 7px;
+  animation:pulse 1.6s ease-in-out infinite;box-shadow:0 0 0 3px color-mix(in srgb,var(--ok) 22%,transparent)}
+.livebar{display:flex;align-items:center;gap:10px;padding:11px 14px;border-radius:var(--r-sm);
+  background:color-mix(in srgb,var(--ok) 10%,transparent);
+  border:1px solid color-mix(in srgb,var(--ok) 32%,transparent);font-size:12.8px;margin-bottom:14px}
+.livebar.dead{background:color-mix(in srgb,var(--gap) 10%,transparent);
+  border-color:color-mix(in srgb,var(--gap) 32%,transparent)}
+.livebar.dead .livedot{background:var(--gap);animation:none;
+  box-shadow:0 0 0 3px color-mix(in srgb,var(--gap) 22%,transparent)}
+@media (prefers-reduced-motion:reduce){.livedot{animation:none}}
+.navfoot b{color:var(--ink);font-family:var(--mono);font-weight:600}
+
+/* score ring */
+/* An app's own icon, with the readiness ring drawn around it. Two facts in
+   one glyph, and it makes a ten-project list scannable at a glance. */
+.appicon{width:20px;height:20px;border-radius:5px;object-fit:cover;display:block;
+  background:var(--e3);
+  /* Plenty of real app icons are solid black or solid white, and either one
+     disappears into the surface it sits on. The outline is what makes the tile
+     legible as a tile, so it is strong enough to read against both. */
+  box-shadow:0 0 0 1px color-mix(in srgb,var(--ink) 28%,transparent),
+             inset 0 0 0 1px color-mix(in srgb,var(--ink) 10%,transparent)}
+.ring .appicon{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%)}
+.ring.lg .appicon{width:30px;height:30px;border-radius:7px}
+.icontile{width:44px;height:44px;border-radius:10px;object-fit:cover;flex:0 0 44px;
+  background:var(--e3);box-shadow:0 0 0 1px color-mix(in srgb,var(--ink) 26%,transparent)}
+.ring{position:relative;width:32px;height:32px;flex:0 0 32px}
+.ring svg{width:32px;height:32px;transform:rotate(-90deg)}
+.ring circle{fill:none;stroke-width:2.6;stroke-linecap:round}
+.ring .bgc{stroke:var(--line2)}
+
+.ring .rv{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;
+  font-size:10px;font-weight:700;font-family:var(--mono);line-height:1;letter-spacing:-.02em}
+
+/* ── main ────────────────────────────────────────────────────────────── */
+main{flex:1;min-width:0;padding-bottom:90px}
+.top{padding:26px 34px 0;max-width:1280px}
+.crumb{display:flex;align-items:center;gap:7px;margin-bottom:9px}
+.title{display:flex;align-items:center;gap:14px;flex-wrap:wrap}
+.title h1{font-size:31px;letter-spacing:-.038em;
+  background:linear-gradient(100deg,var(--ink),color-mix(in srgb,var(--ink) 62%,var(--acc)));
+  -webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent}
+.subtitle{color:var(--muted);font-size:13.5px;margin-top:8px;display:flex;align-items:center;gap:8px;
+  max-width:1280px}
+
+/* Folder-style tabs: the selected one shares its surface with the panel below,
+   so the section and its content read as one object rather than two. */
+.tabs{display:flex;gap:4px;margin:24px 0 0;padding:0 34px;max-width:1280px;overflow-x:auto;
+  scrollbar-width:none}
+.tabs::-webkit-scrollbar{display:none}
+.tab{display:flex;align-items:center;gap:8px;padding:10px 15px 11px;border-radius:11px 11px 0 0;
+  font-size:13px;font-weight:560;color:var(--muted);white-space:nowrap;position:relative;
+  border:1px solid transparent;border-bottom:none;transition:color .14s,background .14s;letter-spacing:-.006em}
+.tab svg{opacity:.75;transition:opacity .14s,transform .18s}
+.tab:hover{color:var(--ink)}
+.tab:hover svg{opacity:1}
+.tab[aria-selected=true]{color:var(--ink);background:var(--e1);border-color:var(--line2);
+  box-shadow:0 -1px 0 var(--line2)}
+.tab[aria-selected=true] svg{opacity:1;color:var(--acc);transform:translateY(-1px)}
+.tab[aria-selected=true]::after{content:"";position:absolute;inset:0 0 auto 0;height:2px;border-radius:2px 2px 0 0;
+  background:linear-gradient(90deg,var(--acc),var(--acc2));box-shadow:0 0 14px -2px var(--acc)}
+.tab .badge{font-family:var(--mono);font-size:9.5px;padding:1px 6px;border-radius:20px;background:var(--e3);
+  color:var(--faint)}
+.tab[aria-selected=true] .badge{background:var(--acc-soft);color:var(--acc)}
+.panel{margin:0 34px;max-width:1280px;background:var(--e1);border:1px solid var(--line2);
+  border-radius:0 var(--r-lg) var(--r-lg) var(--r-lg);padding:24px;box-shadow:var(--hair)}
+.pane-fleet{margin:24px 34px 0;max-width:1280px}
+
+/* ── hero (fleet) ────────────────────────────────────────────────────── */
+.hero{display:flex;gap:28px;align-items:center;flex-wrap:wrap;background:
+  radial-gradient(130% 160% at 0% 0%,color-mix(in srgb,var(--acc) 7%,transparent),transparent 58%),
+  var(--e1);
+  border:1px solid var(--line);border-radius:var(--r-lg);padding:26px 28px;box-shadow:var(--hair);
+  margin-bottom:18px}
+.bigring{position:relative;width:112px;height:112px;flex:0 0 112px}
+.bigring svg{width:112px;height:112px;transform:rotate(-90deg)}
+.bigring circle{fill:none;stroke-width:7;stroke-linecap:round}
+.bigring .bgc{stroke:var(--na)}
+/* `color` is set inline to the score's tone so currentColor here is the ring's
+   own hue. Inheriting it resolves to --ink and paints a white halo. */
+.bigring .fg{filter:drop-shadow(0 0 9px color-mix(in srgb,currentColor 45%,transparent))}
+.bigring .mid{position:absolute;inset:0;display:grid;place-items:center;text-align:center}
+.bigring .mid .rv{font-size:30px;font-weight:720;letter-spacing:-.045em;font-family:var(--mono);display:block;
+  line-height:1}
+.bigring .mid>span{display:block;line-height:1}
+.bigring .mid .rv>span{display:inline;font-size:15px;letter-spacing:-.02em}
+.bigring .mid .lbl{display:block;margin-top:7px}
+.herostats{display:grid;grid-template-columns:repeat(auto-fit,minmax(112px,1fr));gap:11px;flex:1;min-width:270px}
+.hs{background:var(--e2);border:1px solid var(--line);border-radius:var(--r-sm);padding:12px 14px}
+.hs .n{font-size:22px;font-weight:700;letter-spacing:-.04em;font-family:var(--mono);line-height:1.2}
+.hs.warn .n{color:var(--gap)}
+.hs.good .n{color:var(--ok)}
+.hs .l{margin-top:4px}
+
+/* ── project cards (fleet) ───────────────────────────────────────────── */
+.pcards{display:grid;grid-template-columns:repeat(auto-fill,minmax(292px,1fr));gap:13px;margin-bottom:20px}
+.pcard{background:var(--e1);border:1px solid var(--line);border-radius:var(--r);padding:16px 17px;
+  cursor:pointer;transition:transform .16s,border-color .16s,background .16s;position:relative;overflow:hidden;
+  box-shadow:var(--hair)}
+/* The rail is the project's own hue, so a card is identifiable before you have
+   read its name. Decoration only — never a grade, which is why it runs down the
+   side rather than across the top: a coloured bar above a row of cells reads as
+   a status, and a red-ish hue over an all-green project would be a lie told in
+   CSS. */
+.pcard::before{content:"";position:absolute;inset:0 auto 0 0;width:3px;
+  background:linear-gradient(hsl(var(--p,160) 48% 58%),hsl(calc(var(--p,160) + 30) 44% 44%));
+  opacity:.5;transition:opacity .2s}
+.pcard:hover{transform:translateY(-2px);border-color:var(--line2);background:var(--e2)}
+.pcard:hover::before{opacity:1}
+.pcard .ph{display:flex;align-items:center;gap:11px;margin-bottom:13px}
+.pcard .ph .nm{flex:1;min-width:0}
+.pcard .ph b{display:block;font-size:15px;font-weight:620;letter-spacing:-.02em;white-space:nowrap;
+  overflow:hidden;text-overflow:ellipsis}
+.plats{display:flex;gap:5px;flex-wrap:wrap;margin-top:6px}
+.plat{display:inline-flex;align-items:center;gap:4px;font-size:10px;font-family:var(--mono);
+  letter-spacing:.05em;text-transform:uppercase;padding:3px 7px;border-radius:6px;
+  background:var(--e3);color:var(--muted);border:1px solid var(--line)}
+.plat svg{width:11px;height:11px}
+.bar{display:flex;gap:2px;margin:13px 0 11px}
+.bar i{height:6px;flex:1;border-radius:2px;display:block;transition:opacity .2s}
+.pcard .pf{display:flex;align-items:center;gap:9px;font-size:11.5px;color:var(--faint);
+  font-family:var(--mono);letter-spacing:.02em}
+
+/* ── generic bits ────────────────────────────────────────────────────── */
+.pill{display:inline-flex;align-items:center;gap:5px;font-family:var(--mono);font-size:10px;font-weight:600;
+  padding:3.5px 9px;border-radius:20px;background:var(--e3);color:var(--muted);text-transform:uppercase;
+  letter-spacing:.09em;white-space:nowrap;border:1px solid var(--line)}
+.pill svg{width:11px;height:11px;flex:0 0 auto}
+/* ── a pill that carries a SENTENCE ──────────────────────────────────────
+   Most pills are one or two words and `nowrap` is right for them. Two are
+   not: a decision's cost ("free for public repos; included minutes") and a
+   store requirement ("none — Play requires 1024×500"). At 375px the cost chip
+   had its right edge 61px past the viewport, inside a card with
+   `overflow:hidden` and no ellipsis — so it was cut mid-word with nothing to
+   say so and no way to scroll to the rest.
+
+   It WRAPS rather than truncating, because nothing here is disposable: a
+   number a buyer is about to act on must not end in an ellipsis. `anywhere`
+   is the floor for a single unbreakable token, and the full string is on the
+   title as well. */
+.pill.long{max-width:100%;min-width:0;white-space:normal;text-align:left}
+.pill.long>.t{min-width:0;overflow-wrap:anywhere}
+.pill.live{background:color-mix(in srgb,var(--ok) 15%,transparent);color:var(--ok);
+  border-color:color-mix(in srgb,var(--ok) 30%,transparent)}
+.pill.danger{background:color-mix(in srgb,var(--gap) 14%,transparent);color:var(--gap);
+  border-color:color-mix(in srgb,var(--gap) 28%,transparent)}
+.pill.warn{background:color-mix(in srgb,var(--warn) 15%,transparent);color:var(--warn);
+  border-color:color-mix(in srgb,var(--warn) 30%,transparent)}
+.pill.acc{background:var(--acc-soft);color:var(--acc);border-color:color-mix(in srgb,var(--acc) 32%,transparent)}
+.card{background:var(--e2);border:1px solid var(--line);border-radius:var(--r);margin-bottom:14px;
+  overflow:hidden;box-shadow:var(--hair)}
+.card>.h{padding:13px 16px;border-bottom:1px solid var(--line);display:flex;align-items:center;gap:9px;
+  flex-wrap:wrap;background:color-mix(in srgb,var(--e3) 40%,transparent)}
+.card>.h h3{font-size:13.5px;letter-spacing:-.015em;display:flex;align-items:center;gap:8px}
+.card>.h h3 svg{color:var(--acc);opacity:.9}
+.card>.b{padding:15px 16px}
+.spacer{margin-left:auto}
+.btn{display:inline-flex;align-items:center;gap:7px;padding:8px 14px;border-radius:9px;font-size:12.5px;
+  font-weight:600;white-space:nowrap;transition:transform .12s,opacity .12s,box-shadow .16s;
+  background:linear-gradient(140deg,var(--acc),var(--acc2));color:#04120F;letter-spacing:-.005em}
+.btn:hover{transform:translateY(-1px);box-shadow:var(--glow)}
+.btn.ghost{background:var(--e3);color:var(--ink);border:1px solid var(--line2)}
+.btn.ghost:hover{box-shadow:none;border-color:var(--acc)}
+.btn.sm{padding:5px 10px;font-size:11.5px;border-radius:7px}
+.empty{color:var(--faint);font-size:13px;padding:8px 0;display:flex;align-items:center;gap:8px}
+.note{background:var(--e2);border:1px solid var(--line);border-left:2px solid var(--acc);
+  border-radius:var(--r-sm);padding:13px 15px;font-size:13px;color:var(--muted);margin-bottom:14px;line-height:1.62;
+  display:flex;gap:11px}
+.note svg{color:var(--acc);margin-top:2px}
+.note b{color:var(--ink)}
+.note.bad{border-left-color:var(--gap)} .note.bad svg{color:var(--gap)}
+.note.good{border-left-color:var(--ok)} .note.good svg{color:var(--ok)}
+code.cmd{display:flex;align-items:center;gap:10px;font-size:12.5px;background:var(--e0);
+  border:1px solid var(--line2);border-radius:9px;padding:11px 13px;overflow-x:auto;white-space:pre;
+  margin:10px 0 0;color:var(--acc)}
+
+/* readiness rows */
+.checks{display:grid;gap:7px}
+.check{display:flex;gap:13px;align-items:flex-start;padding:14px 16px;background:var(--e2);
+  border:1px solid var(--line);border-radius:var(--r);cursor:pointer;
+  transition:border-color .15s,transform .15s,background .15s;width:100%}
+.check:hover{border-color:var(--line2);background:var(--e3);transform:translateX(2px)}
+.chip{width:24px;height:24px;border-radius:7px;display:grid;place-items:center;flex:0 0 24px;margin-top:1px}
+.chip.ok{background:color-mix(in srgb,var(--ok) 16%,transparent);color:var(--ok)}
+.chip.gap{background:color-mix(in srgb,var(--gap) 15%,transparent);color:var(--gap)}
+.chip.unknown{background:color-mix(in srgb,var(--warn) 16%,transparent);color:var(--warn)}
+.chip.na{background:var(--na);color:var(--faint)}
+.check .t{flex:1;min-width:0}
+.check .t b{font-weight:580;font-size:13.8px;letter-spacing:-.012em}
+.check .t p{margin:5px 0 0;font-size:12.5px;color:var(--muted);line-height:1.58}
+
+/* decisions */
+.dec{padding:15px 17px;border-bottom:1px solid var(--line);transition:background .15s}
+.dec:last-child{border-bottom:0}
+.dec:hover{background:color-mix(in srgb,var(--e3) 45%,transparent)}
+.dec .t2{display:flex;gap:9px;align-items:center;flex-wrap:wrap;margin:5px 0 7px}
+.dec .ch{font-weight:620;font-size:14px;letter-spacing:-.018em}
+.dec .wy{font-size:12.7px;color:var(--muted);line-height:1.65;margin:0;max-width:78ch}
+
+/* ── the fleet grid ───────────────────────────────────────────────────────
+   Transposed, and that is the fix.
+
+   It used to run project-per-row and check-per-column, which forced seventeen
+   column labels into 36px each — so they were set on their side, rotated 90°,
+   in a 126px band above the data. Nobody reads a rotated label. It was the
+   single worst pattern on the page, and it was also the reason the grid ate
+   half the screen before showing a single cell.
+   Checks are the long list and projects are the short one, so checks became
+   the rows: every label now reads horizontally at its natural size, the head
+   band is one line of app names, and the whole thing is legible shrunk to a
+   thumbnail — which is how most people will ever see it. */
+.gridwrap{background:var(--e1);border:1px solid var(--line);border-radius:var(--r-lg);
+  box-shadow:var(--hair);overflow-x:auto}
+table.grid{border-collapse:separate;border-spacing:0;width:100%}
+table.grid th.corner,table.grid td.rowhead{position:sticky;left:0;z-index:2;background:var(--e1);
+  border-right:1px solid var(--line2);text-align:left}
+table.grid thead th{vertical-align:bottom;padding:0;border-bottom:1px solid var(--line2)}
+table.grid th.corner{padding:0 16px 11px;min-width:232px;vertical-align:bottom}
+/* One app per column, at a fixed width — with `width:100%` on the table, a
+   single-project fleet stretched its one column across the whole screen. */
+.phead{width:106px;min-width:106px;padding:14px 8px 11px!important;text-align:center}
+tbody td:not(.rowhead){width:106px}
+.phead button{width:100%;display:flex;flex-direction:column;align-items:center;gap:6px}
+.phead .pname{font-weight:620;letter-spacing:-.015em;font-size:12.5px;max-width:96px;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;display:block}
+.phead .pmeta{font-size:10px;color:var(--faint);display:block;font-family:var(--mono);letter-spacing:.04em}
+.phead:hover .pname{color:var(--acc)}
+/* Each row is one question, spelled out. */
+td.rowhead{padding:0 16px;height:34px;border-bottom:1px solid var(--line);font-size:12.5px}
+td.rowhead .rh{display:flex;align-items:center;gap:8px;letter-spacing:-.005em}
+td.rowhead .crit{width:5px;height:5px;border-radius:50%;background:var(--gap);flex:0 0 5px;
+  box-shadow:0 0 0 2px color-mix(in srgb,var(--gap) 25%,transparent)}
+tbody td{border-bottom:1px solid var(--line);padding:0;text-align:center;height:34px}
+tbody tr:last-child td{border-bottom:0}
+tbody tr:hover td{background:color-mix(in srgb,var(--e3) 42%,transparent)}
+tbody tr:hover td.rowhead{background:var(--e2)}
+.cell{width:22px;height:22px;border-radius:6px;display:inline-block;vertical-align:middle;
+  transition:transform .13s,box-shadow .13s}
+.cell:hover{transform:scale(1.3)}
+.cell.ok{background:var(--ok)} .cell.gap{background:var(--gap)}
+.cell.unknown{background:var(--warn)} .cell.na{background:var(--na)}
+.cell.crit{box-shadow:0 0 0 2px color-mix(in srgb,var(--gap) 45%,transparent),0 0 14px -3px var(--gap)}
+.rowproblem{padding:14px 16px;color:var(--muted);font-size:13px;font-style:italic}
+.legend{display:flex;gap:17px;flex-wrap:wrap;margin-top:14px;font-size:11.5px;color:var(--muted);
+  align-items:center;font-family:var(--mono);letter-spacing:.03em}
+.legend i{width:9px;height:9px;border-radius:2.5px;display:inline-block;margin-right:6px;vertical-align:-1px}
+
+/* roadmap */
+.ideabox{display:flex;gap:9px}
+.ideabox input{flex:1;padding:12px 15px;border:1px solid var(--line2);border-radius:11px;background:var(--e0);
+  color:var(--ink);font:inherit;font-size:14.5px;transition:border-color .15s,box-shadow .15s}
+.ideabox input::placeholder{color:var(--faint)}
+.ideabox input:focus{outline:none;border-color:var(--acc);box-shadow:var(--glow)}
+.lane{margin-bottom:16px}
+.lanehead{display:flex;align-items:center;gap:9px;margin-bottom:8px}
+.lanehead .n{font-family:var(--mono);font-size:11px;color:var(--faint)}
+ul.tasks{list-style:none;margin:0;padding:0}
+ul.tasks li{display:flex;gap:12px;align-items:flex-start;padding:11px 13px;border-radius:var(--r-sm);
+  font-size:13.4px;background:var(--e2);border:1px solid var(--line);
+  transition:border-color .15s,background .15s}
+ul.tasks li:hover{border-color:var(--line2);background:var(--e3)}
+ul.tasks li+li{margin-top:5px}
+ul.tasks li.first{border-color:color-mix(in srgb,var(--acc) 40%,transparent);background:var(--acc-soft)}
+.tid{font-family:var(--mono);font-size:11px;color:var(--faint);padding-top:2px;min-width:48px}
+.ttitle{flex:1;min-width:0;line-height:1.5}
+.treason{font-size:11.5px;color:var(--gap);margin-top:4px;display:flex;gap:6px;align-items:flex-start}
+.prio{display:inline-flex;gap:2px;background:var(--e0);border:1px solid var(--line);border-radius:7px;padding:2px}
+.prio button{font-family:var(--mono);font-size:10px;font-weight:700;padding:3px 6px;border-radius:5px;
+  color:var(--faint);letter-spacing:.03em;transition:background .12s,color .12s}
+.prio button:hover{color:var(--ink)}
+.prio button.on{background:var(--acc-soft);color:var(--acc)}
+.nowtag{display:inline-flex;align-items:center;gap:5px;font-family:var(--mono);font-size:9.5px;font-weight:700;
+  color:var(--acc);text-transform:uppercase;letter-spacing:.1em;white-space:nowrap;padding-top:3px}
+.outcome{font-family:var(--mono);font-size:9.5px;font-weight:700;padding:3px 8px;border-radius:6px;
+  white-space:nowrap;text-transform:uppercase;letter-spacing:.07em}
+.outcome.pushed{background:color-mix(in srgb,var(--ok) 16%,transparent);color:var(--ok)}
+.outcome.committed,.outcome.timed-out{background:color-mix(in srgb,var(--warn) 18%,transparent);color:var(--warn)}
+.outcome.blocked,.outcome.no-change,.outcome.infra-failed{background:color-mix(in srgb,var(--gap) 14%,transparent);
+  color:var(--gap)}
+/* the two executors, side by side */
+.execs{display:grid;grid-template-columns:repeat(auto-fit,minmax(266px,1fr));gap:12px;margin-bottom:16px}
+.exec{background:var(--e2);border:1px solid var(--line);border-radius:var(--r);padding:16px 17px;
+  display:flex;flex-direction:column;gap:11px;box-shadow:var(--hair)}
+.exec.on{border-color:color-mix(in srgb,var(--ok) 35%,transparent)}
+.exec .eh{display:flex;align-items:center;gap:9px}
+.exec .eh svg{color:var(--acc)}
+.exec .eh b{font-size:13.5px;font-weight:620;letter-spacing:-.015em}
+.exec p{margin:0;font-size:12.3px;color:var(--muted);line-height:1.6;flex:1}
+.switch{width:40px;height:23px;border-radius:20px;background:var(--line2);position:relative;
+  transition:background .18s;flex:0 0 40px}
+.switch::after{content:"";position:absolute;top:2.5px;left:2.5px;width:18px;height:18px;border-radius:50%;
+  background:#fff;transition:transform .18s;box-shadow:0 1px 3px rgba(0,0,0,.4)}
+.switch[data-on=true]{background:var(--ok)}
+.switch[data-on=true]::after{transform:translateX(17px)}
+.toggle{display:inline-flex;align-items:center;gap:9px;font-size:12px;color:var(--muted);font-family:var(--mono)}
+
+table.kv{width:100%;border-collapse:collapse;font-size:12.8px}
+table.kv td{padding:7px 0;border-bottom:1px solid var(--line);vertical-align:top}
+table.kv td:first-child{width:196px;padding-right:14px}
+table.kv tr:last-child td{border-bottom:0}
+table.kv code{font-size:11.8px;word-break:break-all;color:var(--acc)}
+/* A kv table sharing a flex row with the app's icon. The min-width is what
+   stops the two columns collapsing into each other on a wide card; on a phone
+   it is 260px of demand in a 283px box next to a 64px icon, which is how
+   "Store presence" came to clip its own table. */
+.kvflex{flex:1;min-width:260px}
+
+.soon{border:1px dashed var(--line2);border-radius:var(--r);padding:34px;text-align:center;color:var(--faint);
+  font-size:13px;background:radial-gradient(90% 120% at 50% 0%,var(--acc-soft),transparent 70%)}
+.soon svg{width:26px;height:26px;color:var(--faint);margin-bottom:10px}
+.soon b{display:block;color:var(--muted);font-size:14.5px;margin-bottom:6px;font-weight:640}
+
+/* drawer + toast */
+.scrim{position:fixed;inset:0;background:rgba(4,6,10,.62);z-index:50;opacity:0;pointer-events:none;
+  transition:opacity .2s;backdrop-filter:blur(2px)}
+.scrim.open{opacity:1;pointer-events:auto}
+aside.drawer{position:fixed;top:0;right:0;height:100%;width:min(462px,100%);background:var(--e1);
+  border-left:1px solid var(--line2);z-index:51;transform:translateX(100%);
+  transition:transform .26s cubic-bezier(.22,.9,.28,1);overflow-y:auto;box-shadow:-20px 0 60px rgba(0,0,0,.5)}
+aside.drawer.open{transform:none}
+.drawer .head{padding:24px 26px 18px;border-bottom:1px solid var(--line);
+  background:radial-gradient(110% 130% at 100% 0%,var(--acc-soft),transparent 62%)}
+.drawer .head h2{font-size:19.5px;margin-top:8px;line-height:1.32}
+.drawer .content{padding:22px 26px 46px}
+.drawer p{margin:0 0 16px;font-size:13.8px;color:var(--muted);line-height:1.68}
+.drawer h4{margin:0 0 8px;display:flex;align-items:center;gap:7px}
+.close{position:absolute;top:19px;right:21px;color:var(--faint);line-height:1;padding:5px;border-radius:8px}
+.close:hover{background:var(--e3);color:var(--ink)}
+.toast{position:fixed;bottom:24px;left:50%;transform:translateX(-50%) translateY(80px);
+  background:var(--e1);border:1px solid var(--line2);color:var(--ink);padding:12px 20px;border-radius:11px;
+  font-size:13px;z-index:70;opacity:0;transition:transform .24s cubic-bezier(.2,.9,.3,1),opacity .24s;
+  box-shadow:var(--shadow);display:flex;align-items:center;gap:9px}
+.toast.show{transform:translateX(-50%);opacity:1}
+.toast svg{color:var(--ok)}
+.toast.err{border-color:color-mix(in srgb,var(--gap) 45%,transparent)}
+.toast.err svg{color:var(--gap)}
+/* ── demo mode ────────────────────────────────────────────────────────────
+   Unmissable on purpose. Every screenshot taken of the demo fleet carries
+   this band, so an image of seven invented apps can never be passed off —
+   by us or by anybody else — as a picture of somebody's real one. */
+.demobar{position:sticky;top:0;z-index:40;display:flex;align-items:center;gap:10px;
+  padding:7px 18px;font-family:var(--mono);font-size:11px;letter-spacing:.1em;text-transform:uppercase;
+  color:#1B1302;background:linear-gradient(90deg,#FFC85C,#FFB43C);
+  box-shadow:0 1px 0 rgba(0,0,0,.35)}
+/* `display:flex` beats the `hidden` attribute, and for one build it did: the
+   band rendered over a real fleet of three real repositories, labelling
+   somebody's own projects as invented data. The most damaging bug available in
+   this feature, and it was two words of CSS. */
+.demobar[hidden]{display:none}
+.demobar b{font-weight:800;letter-spacing:.14em}
+.demobar span{font-weight:600;letter-spacing:.04em;text-transform:none;font-size:11.5px;opacity:.86}
+.demobar .spacer{margin-left:auto}
+/* The band carries a sentence AND a folder name, and it is `position:sticky`,
+   which still contributes to the document's scroll width — so a band that
+   overflowed would make the whole page scroll sideways. Everything in it can
+   therefore shrink and ends in an ellipsis; only the "Demo data" wordmark is
+   allowed to hold its size, because it is the part that must survive a crop. */
+.demobar{overflow:hidden}
+.demobar>b{flex:0 0 auto}
+.demobar span,.demobar #demoroot{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.demobar #demoroot{flex:0 1 auto;font-weight:700;letter-spacing:.06em;opacity:.8}
+
+/* ── which repository this row is ─────────────────────────────────────────
+   Shown only when another registered project shares this one's name, the way
+   an editor qualifies two tabs called `index.ts`. Dim and mono, because it is
+   a disambiguator rather than part of the name: on a fleet where nothing
+   collides it is not rendered at all. */
+.dir{font-family:var(--mono);font-size:10.5px;color:var(--faint);letter-spacing:.02em;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0;max-width:100%}
+
+/* ── derived identity ─────────────────────────────────────────────────────
+   For a project with no icon of its own. Deliberately deep and low-chroma:
+   it sits beside cells whose colour MEANS something, and an accent that
+   could be mistaken for a grade would be the page lying in CSS. */
+.tile{display:grid;place-items:center;flex:0 0 auto;font-family:var(--mono);font-weight:700;
+  color:#fff;text-shadow:0 1px 2px rgba(0,0,0,.35);
+  background:linear-gradient(145deg,hsl(var(--p) 42% 44%),hsl(calc(var(--p) + 32) 46% 28%));
+  box-shadow:inset 0 0 0 1px rgba(255,255,255,.18),0 0 0 1px color-mix(in srgb,var(--ink) 22%,transparent)}
+.tile.xs{width:20px;height:20px;border-radius:5px;font-size:9.5px}
+.tile.sm{width:26px;height:26px;border-radius:7px;font-size:11px}
+.tile.md{width:44px;height:44px;border-radius:10px;font-size:18px;letter-spacing:-.03em}
+.ring .tile{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%)}
+
+/* ── readiness meter ──────────────────────────────────────────────────────
+   Replaces the 17-dot strip on the cards and in the sidebar. Seventeen
+   squares carry which check is which, which is what the grid is for; at
+   feed-thumbnail size they read as noise. Proportion plus a number reads
+   at any size, which is the only thing a card has to do. */
+.meter{display:flex;gap:2px;height:7px;border-radius:4px;overflow:hidden;background:var(--na)}
+.meter i{display:block;min-width:2px}
+.meter i.ok{background:var(--ok)} .meter i.gap{background:var(--gap)}
+.meter i.unknown{background:var(--warn)}
+.meter.thin{height:4px;gap:1.5px;border-radius:3px}
+.meterlbl{display:flex;align-items:center;gap:6px;margin-top:7px;font-family:var(--mono);font-size:11px;
+  color:var(--faint);letter-spacing:.02em;flex-wrap:wrap}
+.meterlbl b{color:var(--ink);font-weight:650}
+.meterlbl .ok{color:var(--ok)} .meterlbl .gap{color:var(--gap)} .meterlbl .unknown{color:var(--warn)}
+
+/* ── what's live where ────────────────────────────────────────────────── */
+.lives{display:grid;gap:7px}
+.liverow{display:flex;align-items:center;gap:11px;padding:10px 13px;border-radius:var(--r-sm);
+  background:var(--e2);border:1px solid var(--line)}
+.liverow .who{display:flex;align-items:center;gap:9px;min-width:0;flex:1}
+.liverow .who b{font-size:13px;font-weight:600;letter-spacing:-.012em;white-space:nowrap;
+  overflow:hidden;text-overflow:ellipsis}
+.liverow .chan{font-family:var(--mono);font-size:11.5px;color:var(--muted);white-space:nowrap;
+  overflow:hidden;text-overflow:ellipsis;flex:1.2;min-width:0}
+.liverow .ver{font-family:var(--mono);font-size:12.5px;font-weight:650;color:var(--acc);white-space:nowrap}
+.liverow .ver.none{color:var(--faint);font-weight:500}
+.liverow .ev{font-family:var(--mono);font-size:9.5px;text-transform:uppercase;letter-spacing:.11em;
+  color:var(--faint);white-space:nowrap;min-width:92px;text-align:right}
+
+/* ── the path, shortened ──────────────────────────────────────────────────
+   The header used to print the whole absolute path, which wrapped onto two
+   lines, dominated every screenshot and leaked a username into any image
+   that got shared. Parent + basename says where it is; the full path is on
+   hover and one click away. */
+.pathbtn{display:inline-flex;align-items:center;gap:7px;font-family:var(--mono);font-size:12px;
+  color:var(--muted);padding:4px 9px;border-radius:7px;border:1px solid var(--line);background:var(--e1);
+  max-width:100%;transition:border-color .14s,color .14s}
+.pathbtn:hover{border-color:var(--line2);color:var(--ink)}
+.pathbtn .dim{color:var(--faint)}
+.pathbtn svg{opacity:.55}
+
+/* ── arrival ──────────────────────────────────────────────────────────────
+   The ONLY motion tied to data on this page, and it is tied to the fact that
+   a value changed, never to the value itself. A gauge that sweeps to its
+   number displays a wrong number for as long as the sweep lasts; that was
+   removed from this dashboard deliberately and is not coming back. A cell
+   that flashes once because the check genuinely just resolved has no such
+   failure mode — the worst case is a flash on a value that was already right. */
+@keyframes landed{
+  0%{transform:scale(.55);opacity:.25}
+  55%{transform:scale(1.22)}
+  100%{transform:scale(1);opacity:1}
+}
+@keyframes glint{0%{box-shadow:0 0 0 0 color-mix(in srgb,var(--ok) 65%,transparent)}
+  100%{box-shadow:0 0 0 9px transparent}}
+.cell.arrived{animation:landed .42s cubic-bezier(.2,1.1,.35,1) both,glint .7s ease-out .1s both}
+.tick{animation:landed .34s cubic-bezier(.2,1.1,.35,1) both}
+@media (prefers-reduced-motion:reduce){
+  .cell.arrived,.tick{animation:none}
+}
+
+/* ── panes that would otherwise end in a void ─────────────────────────────
+   Decisions, Keys and Marketing can be two cards tall on a small project,
+   leaving most of the viewport black under a folder tab. A panel with a
+   floor, and a closing note that says what the tab is for, ends the page
+   instead of trailing off. */
+.panel{min-height:min(44vh,400px);display:flex;flex-direction:column}
+.panebody{flex:1;display:flex;flex-direction:column}
+/* The one placeholder on the page grows into whatever room is left, so the
+   Marketing tab reads as a reserved space rather than as a hole. */
+.panebody>.soon:last-child{flex:1;display:flex;flex-direction:column;
+  align-items:center;justify-content:center;gap:2px}
+.panefoot{margin-top:auto;padding-top:var(--s4);border-top:1px solid var(--line);
+  display:flex;align-items:flex-start;gap:10px;color:var(--faint);font-size:12.3px;line-height:1.6}
+.panefoot svg{color:var(--line2);margin-top:2px;flex:0 0 auto}
+.panefoot b{color:var(--muted);font-weight:600}
+
+/* ── responsive ───────────────────────────────────────────────────────────
+   Two breakpoints, both previously unverified. 900px folds the sidebar into
+   a strip above the content; 560px is a phone, where the sidebar becomes a
+   horizontal rail and every fixed-width thing has to give. */
+@media (max-width:900px){
+  .shell{flex-direction:column}
+  /* The sidebar becomes a RAIL, not a stacked block. Simply unpinning it put
+     seven full-height project rows above the fold, so the whole first screen
+     of a tablet was navigation and the fleet — the thing being navigated to —
+     started below it. */
+  aside.nav{width:100%;flex:none;height:auto;position:static;border-right:0;
+    border-bottom:1px solid var(--line);overflow:visible}
+  .brand{padding:13px 18px 9px}
+  .navsec{display:none}
+  #navlist{display:flex;gap:8px;overflow-x:auto;padding:0 14px 11px;scrollbar-width:none}
+  #navlist::-webkit-scrollbar{display:none}
+  .navitem{width:auto;margin:0;flex:0 0 auto;padding:8px 12px}
+  .navitem .nm{white-space:nowrap;font-size:13px}
+  .navitem .meter{display:none}
+  /* The current marker moves from a left rail to an underline, because the
+     items now sit side by side. */
+  .navitem[aria-current=true]::before{left:0;top:auto;bottom:-2px;transform:none;
+    width:100%;height:2px;border-radius:2px 2px 0 0;background:linear-gradient(90deg,var(--acc),var(--acc2))}
+  .navfoot{margin-top:0;display:flex;gap:18px;flex-wrap:wrap;padding:10px 18px}
+  .themebtn{position:absolute;top:14px;right:14px;margin:0;z-index:2}
+  .top,.tabs{padding-left:18px;padding-right:18px}
+  .panel,.pane-fleet{margin-left:18px;margin-right:18px}
+  .hero{gap:20px;padding:20px}
+  .herostats{min-width:0}
+}
+/* ── what's live where, below a laptop ────────────────────────────────────
+   `.chan` is the field that answers this panel's own question — "macOS DMG ·
+   updates.harbormaster.studio", "Android Firebase → early-readers" — and at
+   `flex:1.2` in a row with a name, a ref and an evidence label it was
+   ellipsised at 768px. A deliberate ellipsis is better than a silent clip, but
+   not on the one column the panel exists for.
+
+   The rules used to live in the 560px block, so a tablet missed them by 208px.
+   They are their own breakpoint now: below a laptop the channel gets a line of
+   its own, and 560px keeps only what is genuinely phone-specific. */
+@media (max-width:768px){
+  .liverow{flex-wrap:wrap;gap:6px 10px}
+  .liverow .chan{flex:1 0 100%;white-space:normal;overflow:visible;text-overflow:clip}
+  .liverow .who{flex:1 1 auto}
+  .liverow .ev{min-width:0;text-align:left}
+}
+@media (max-width:560px){
+  .top{padding:18px 16px 0}
+  .tabs{padding-left:16px;padding-right:16px}
+  .panel,.pane-fleet{margin-left:12px;margin-right:12px}
+  .panel{padding:16px;min-height:0;border-radius:0 var(--r) var(--r) var(--r)}
+  .title h1{font-size:24px}
+  .subtitle{flex-wrap:wrap}
+  .subtitle .btn{margin-left:0!important}
+  .hero{padding:18px 16px;gap:16px}
+  .bigring,.bigring svg{width:88px;height:88px}
+  .bigring{flex:0 0 88px}
+  .bigring .mid .rv{font-size:24px}
+  .herostats{grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
+  .hs{padding:10px 11px}
+  .hs .n{font-size:18px}
+  .pcards{grid-template-columns:1fr}
+  .execs{grid-template-columns:1fr}
+  table.kv td:first-child{width:auto}
+  .kvflex{min-width:0}
+  .drawer .content{padding:18px 18px 40px}
+  .drawer .head{padding:20px 18px 14px}
+  .ideabox{flex-wrap:wrap}
+  .ideabox input{min-width:0;flex:1 1 160px}
+  .demobar{font-size:9.5px;padding:6px 12px;gap:7px}
+  .demobar span{display:none}
+  /* On a phone the band is the warning and nothing else. The folder name is
+     still in the DOM (and in the terminal); there is no room to print it
+     beside "Demo data" without pushing the warning itself off the screen. */
+  .demobar #demoroot{display:none}
+}
+</style>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true"><defs>
+  <symbol id="i-grid" viewBox="0 0 24 24"><rect x="3" y="3" width="7.5" height="7.5" rx="1.8"/><rect x="13.5" y="3" width="7.5" height="7.5" rx="1.8"/><rect x="3" y="13.5" width="7.5" height="7.5" rx="1.8"/><rect x="13.5" y="13.5" width="7.5" height="7.5" rx="1.8"/></symbol>
+  <symbol id="i-gauge" viewBox="0 0 24 24"><path d="M12 14l4-4"/><path d="M3.6 17.5a9.5 9.5 0 1 1 16.8 0"/></symbol>
+  <symbol id="i-rocket" viewBox="0 0 24 24"><path d="M4.8 14.6c-1.5 1.5-2 5.6-2 5.6s4.1-.5 5.6-2"/><path d="M9.5 15.2L6.6 12.3c0-6 3.9-9.8 9.5-9.8 5.3 0 5.3 0 5.3 0s0 5.9-5.9 9.5l-2.9 2.9"/><circle cx="15.3" cy="8.7" r="1.6"/></symbol>
+  <symbol id="i-bulb" viewBox="0 0 24 24"><path d="M9.2 18h5.6"/><path d="M10.2 21h3.6"/><path d="M12 3a6.2 6.2 0 0 0-3.6 11.2c.4.3.6.7.6 1.1V16h6v-.7c0-.4.2-.8.6-1.1A6.2 6.2 0 0 0 12 3z"/></symbol>
+  <symbol id="i-route" viewBox="0 0 24 24"><path d="M3 6.5l2 2 3.2-3.2"/><path d="M3 15.5l2 2 3.2-3.2"/><path d="M12.5 6.5H21"/><path d="M12.5 12H21"/><path d="M12.5 17.5H21"/></symbol>
+  <symbol id="i-key" viewBox="0 0 24 24"><circle cx="7.6" cy="15.6" r="3.7"/><path d="M10.3 13L20.5 2.8"/><path d="M17.6 5.7l2.6 2.6"/><path d="M15 8.3l2.6 2.6"/></symbol>
+  <symbol id="i-mega" viewBox="0 0 24 24"><path d="M3 10.5v3a1.2 1.2 0 0 0 1.2 1.2H6l9 5.3V4L6 9.3H4.2A1.2 1.2 0 0 0 3 10.5z"/><path d="M18.5 8.5a4.5 4.5 0 0 1 0 7"/></symbol>
+  <symbol id="i-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4.2"/><path d="M12 2.4v2.4M12 19.2v2.4M4.6 4.6l1.7 1.7M17.7 17.7l1.7 1.7M2.4 12h2.4M19.2 12h2.4M4.6 19.4l1.7-1.7M17.7 6.3l1.7-1.7"/></symbol>
+  <symbol id="i-moon" viewBox="0 0 24 24"><path d="M20.5 14.8A9 9 0 0 1 9.2 3.5 9 9 0 1 0 20.5 14.8z"/></symbol>
+  <symbol id="i-check" viewBox="0 0 24 24"><path d="M4.5 12.5l5 5 10-11"/></symbol>
+  <symbol id="i-alert" viewBox="0 0 24 24"><path d="M12 3.6L21.8 20.4H2.2L12 3.6z"/><path d="M12 10v4.2"/><circle cx="12" cy="17.4" r=".85" fill="currentColor" stroke="none"/></symbol>
+  <symbol id="i-help" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9.2"/><path d="M9.5 9.6a2.6 2.6 0 1 1 3.4 2.5c-.6.2-.9.8-.9 1.4v.5"/><circle cx="12" cy="17.2" r=".8" fill="currentColor" stroke="none"/></symbol>
+  <symbol id="i-minus" viewBox="0 0 24 24"><path d="M6.5 12h11"/></symbol>
+  <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5.2v13.6M5.2 12h13.6"/></symbol>
+  <symbol id="i-copy" viewBox="0 0 24 24"><rect x="9" y="9" width="11.5" height="11.5" rx="2.2"/><path d="M5 15.2V5.8A1.3 1.3 0 0 1 6.3 4.5h9.4"/></symbol>
+  <symbol id="i-play" viewBox="0 0 24 24"><path d="M7.5 4.8L19 12 7.5 19.2z"/></symbol>
+  <symbol id="i-spark" viewBox="0 0 24 24"><path d="M11.5 2.8l1.9 5.3 5.3 1.9-5.3 1.9-1.9 5.3-1.9-5.3L4.3 10l5.3-1.9z"/><path d="M18.4 15.6l.9 2.4 2.4.9-2.4.9-.9 2.4-.9-2.4-2.4-.9 2.4-.9z"/></symbol>
+  <symbol id="i-phone" viewBox="0 0 24 24"><rect x="6.2" y="2.4" width="11.6" height="19.2" rx="2.6"/><path d="M10.6 18.6h2.8"/></symbol>
+  <symbol id="i-monitor" viewBox="0 0 24 24"><rect x="2.5" y="4" width="19" height="12.6" rx="2.2"/><path d="M8.5 20.6h7M12 16.6v4"/></symbol>
+  <symbol id="i-laptop" viewBox="0 0 24 24"><rect x="4.2" y="4.6" width="15.6" height="10.8" rx="1.6"/><path d="M2.2 19h19.6"/></symbol>
+  <symbol id="i-globe" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9.2"/><path d="M2.8 12h18.4"/><path d="M12 2.8a14.5 14.5 0 0 1 0 18.4 14.5 14.5 0 0 1 0-18.4z"/></symbol>
+  <symbol id="i-bot" viewBox="0 0 24 24"><rect x="3.8" y="7.8" width="16.4" height="12.4" rx="4.2"/><path d="M8 4.6L9.7 7.8M16 4.6L14.3 7.8"/><circle cx="9.4" cy="13.4" r=".95" fill="currentColor" stroke="none"/><circle cx="14.6" cy="13.4" r=".95" fill="currentColor" stroke="none"/></symbol>
+  <symbol id="i-shield" viewBox="0 0 24 24"><path d="M12 2.6l8 3v5.9c0 5-3.4 8.7-8 10-4.6-1.3-8-5-8-10V5.6l8-3z"/><path d="M9 12l2.2 2.2L15.4 10"/></symbol>
+  <symbol id="i-zap" viewBox="0 0 24 24"><path d="M13.2 2.2L4.6 13.6h6.3l-.9 8.2 8.6-11.4h-6.3z"/></symbol>
+  <symbol id="i-box" viewBox="0 0 24 24"><path d="M12 2.6l8.6 4.8v9.2L12 21.4 3.4 16.6V7.4z"/><path d="M3.4 7.4L12 12.2l8.6-4.8M12 12.2v9.2"/></symbol>
+  <symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9.2"/><path d="M12 6.8V12l3.4 2"/></symbol>
+  <symbol id="i-refresh" viewBox="0 0 24 24"><path d="M20.6 12a8.6 8.6 0 1 1-2.6-6.1"/><path d="M18.4 2.6v3.8h-3.8"/></symbol>
+  <symbol id="i-chev" viewBox="0 0 24 24"><path d="M9.2 5.2L16 12l-6.8 6.8"/></symbol>
+  <symbol id="i-layers" viewBox="0 0 24 24"><path d="M12 2.8L2.8 7.4 12 12l9.2-4.6z"/><path d="M2.8 12.4L12 17l9.2-4.6"/><path d="M2.8 16.9L12 21.5l9.2-4.6"/></symbol>
+</defs></svg>
+
+<div class="demobar" id="demobar" hidden>
+  <b>Demo data</b>
+  <span>Seven invented apps, written to a temporary folder. Not your projects.</span>
+  <span class="spacer"></span><b id="demoroot"></b>
+</div>
+<div class="shell">
+  <aside class="nav">
+    <div class="brand">
+      <span class="mark"><svg viewBox="0 0 24 24"><use href="#i-rocket"/></svg></span>
+      <span><b>Mission Control</b><span id="brandsub">launchpad</span></span>
+    </div>
+    <div id="navlist"></div>
+    <div class="navfoot" id="navfoot"></div>
+    <button class="themebtn" id="themebtn" title="Switch theme"></button>
+  </aside>
+  <main>
+    <div class="top" id="top"></div>
+    <div id="tabsrow"></div>
+    <div id="panes"></div>
+  </main>
+</div>
+
+<div class="scrim" id="scrim"></div>
+<aside class="drawer" id="drawer">
+  <button class="close" id="drawerClose"><svg class="i lg" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+  <div class="head"><div class="lbl" id="dEyebrow"></div><h2 id="dTitle"></h2></div>
+  <div class="content" id="dBody"></div>
+</aside>
+<div class="toast" id="toast"></div>
+
+<script>
+const TOKEN = '__LAUNCHPAD_TOKEN__';
+/* True only under `launchpad dashboard --demo`. Never a styling switch: it is
+   what puts "demo data" where nobody can miss it, so a screenshot of the demo
+   fleet can never be mistaken for a screenshot of somebody's real one. */
+const DEMO = ('__LAUNCHPAD_DEMO__' === 'true');
+/* The demo fleet's temp folder, as parent/basename. The server computes it;
+   the band prints it. Never the absolute path — see `demoLabel()`. */
+const DEMO_ROOT = '__LAUNCHPAD_DEMO_ROOT__';
+let DATA = null;
+/**
+ * How live the live channel actually is.
+ *
+ * The server sends this as its own `watch` event, once per connection and again
+ * whenever it changes. Nothing here guesses: if `fs.watch` was refused, or the
+ * fleet is bigger than one connection's watcher ceiling, the page says the
+ * numbers are up to fifteen seconds old instead of implying they are current.
+ */
+let WATCH = null;
+let VIEW = { project: null, tab: 'readiness' };
+/* The poll re-reads every 30s. Without these two guards it also re-rendered
+   every 30s — replaying every entry animation and restarting every progress
+   ring from zero, so the page visibly rebooted twice a minute and any ring you
+   happened to look at was mid-sweep. Now: skip the render entirely when nothing
+   changed, and only play entry animations when the VIEW changed rather than
+   when the data did. */
+let lastJson = '', lastKey = '', ANIM = true;
+const rise = i => ANIM ? ` class="rise" style="animation-delay:${i}ms"` : '';
+
+/**
+ * What just changed.
+ *
+ * `ARRIVED` holds `path|check` for every cell that went from not-done to done
+ * between the previous payload and this one, and `TICK` says the fleet's
+ * outstanding count moved. Both are consumed by exactly one render and then
+ * cleared, so a re-render caused by clicking a tab never replays them.
+ *
+ * This is the only place on the page where motion is tied to data, and it is
+ * tied to the CHANGE rather than to the value — see the `.arrived` rule for
+ * why that distinction is a correctness property here and not a style
+ * preference.
+ */
+let GRADES = null, ARRIVED = new Set(), TICK = false, lastRemaining = null;
+
+function noteArrivals(data) {
+  const now = {};
+  for (const p of data.projects) {
+    for (const c of (p.score ? p.score.checks : [])) now[p.path + '|' + c.id] = c.grade;
+  }
+  // First payload: everything is "new" and nothing has arrived. Flashing the
+  // whole grid on open would be theatre, and it would also be the one moment
+  // the page is most likely to be photographed.
+  if (GRADES) {
+    for (const k in now) if (now[k] === 'ok' && GRADES[k] && GRADES[k] !== 'ok') ARRIVED.add(k);
+    TICK = lastRemaining != null && data.totals.remaining !== lastRemaining;
+  }
+  GRADES = now;
+  lastRemaining = data.totals.remaining;
+}
+
+const $ = s => document.querySelector(s);
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const ico = (n, cls) => `<svg class="i ${cls || ''}" viewBox="0 0 24 24"><use href="#i-${n}"/></svg>`;
+const tone = n => n >= 80 ? 'var(--ok)' : n >= 55 ? 'var(--warn)' : 'var(--gap)';
+
+/** Platform badge: an authored glyph plus a mono label. Deliberately not a
+ *  vendor logo — a mangled brand mark looks worse than no mark at all. */
+const PLATFORM = {
+  'ios':        ['phone',   'iOS'],
+  'android':    ['bot',     'Android'],
+  'macos-dmg':  ['laptop',  'macOS'],
+  'web-app':    ['monitor', 'Web'],
+  'static-site':['globe',   'Site'],
+};
+const platBadge = a => {
+  const p = PLATFORM[a] || ['box', a];
+  return `<span class="plat">${ico(p[0])}${esc(p[1])}</span>`;
+};
+const GRADE_ICON = { ok: 'check', gap: 'alert', unknown: 'help', 'n/a': 'minus' };
+
+/**
+ * A pill carrying free-form text rather than a one-word status.
+ *
+ * The text goes in its own element so it can wrap — `text-overflow` and
+ * `overflow-wrap` do nothing to a bare text node that is an anonymous flex
+ * item — and the whole string is on `title` as well, so a chip that has wrapped
+ * onto three lines can still be read in one piece on hover.
+ */
+const longPill = (cls, icon, text) =>
+  `<span class="pill long ${cls || ''}" title="${esc(text)}">${icon ? ico(icon) : ''}<span class="t">${esc(text)}</span></span>`;
+
+/**
+ * The parent path, when — and only when — two rows would otherwise be
+ * indistinguishable. `dir` is set by `disambiguate()` in the payload, so the
+ * page never has to work out whether a name is ambiguous; a fleet with no
+ * collisions renders exactly what it rendered before.
+ */
+const dirTag = p => (p.dir ? `<span class="dir" title="${esc(p.path)}">${esc(p.dir)}/</span>` : '');
+/** The label, qualified if it must be. Matches `labelOf()` in registry.ts. */
+const labelOf = p => (p.dir ? `${p.dir}/${p.name}` : p.name);
+
+/**
+ * Why a row has no data, in three words or so.
+ *
+ * `not onboarded` was said for all three reasons, including a `state.yml` that
+ * exists and will not parse — a project that IS onboarded. A short label per
+ * kind, with the full sentence in the row itself.
+ */
+const PROBLEM_LABEL = {
+  'missing-directory': 'directory gone',
+  'not-onboarded': 'not onboarded',
+  'unreadable-state': 'state unreadable',
+};
+const problemLabel = p => PROBLEM_LABEL[p.problemKind] || 'not onboarded';
+
+function toast(msg, isErr) {
+  const t = $('#toast');
+  t.innerHTML = ico(isErr ? 'alert' : 'check') + `<span>${esc(msg)}</span>`;
+  t.className = 'toast show' + (isErr ? ' err' : '');
+  clearTimeout(t._t); t._t = setTimeout(() => { t.className = 'toast'; }, 2800);
+}
+async function post(path, body) {
+  const r = await fetch(path, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', 'x-launchpad-token': TOKEN },
+    body: JSON.stringify(body),
+  });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(j.error || 'that did not work');
+  return j;
+}
+/** One door for every payload, however it arrived: poll, stream or a write. */
+function apply(txt) {
+  if (txt === lastJson) return;
+  lastJson = txt;
+  DATA = JSON.parse(txt);
+  noteArrivals(DATA);
+  render();
+}
+async function load() {
+  apply(await (await fetch('/api/data')).text());
+}
+
+/**
+ * The live channel.
+ *
+ * The server has watched every project's `.launchpad/` and pushed over SSE
+ * since the day it was written — and the page never connected to it, so
+ * Mission Control was a static snapshot of whenever you last pressed reload.
+ * An overnight run moves through agent → gate → commit → publish and none of
+ * it reached the screen.
+ *
+ * `EventSource` reconnects on its own, so there is no retry logic here. The
+ * poll stays as the floor: `fs.watch` is genuinely unreliable on some network
+ * and container filesystems, and a dashboard that has silently stopped
+ * updating is worse than one that updates slowly.
+ */
+function connect() {
+  let streaming = false;
+  try {
+    const es = new EventSource('/api/stream');
+    es.onmessage = e => { streaming = true; apply(e.data); };
+    /* A named event, so `onmessage` keeps receiving nothing but the payload.
+       This is the channel telling on itself — see `WATCH`. */
+    es.addEventListener('watch', e => {
+      try { WATCH = JSON.parse(e.data); } catch (err) { WATCH = null; }
+      if (DATA) renderNav();
+    });
+    es.onerror = () => { streaming = false; };
+  } catch (e) { /* no EventSource: the poll below is the whole mechanism */ }
+  setInterval(() => { if (!streaming) load().catch(() => {}); }, 30000);
+}
+async function act(fn, okMsg) {
+  try { await fn(); await load(); if (okMsg) toast(okMsg); }
+  catch (e) { toast(e.message, true); }
+}
+const cur = () => DATA.projects.find(p => p.path === VIEW.project) || null;
+function go(projectPath, tab) {
+  VIEW.project = projectPath;
+  VIEW.tab = tab || (projectPath ? 'readiness' : 'fleet');
+  render(); window.scrollTo({ top: 0, behavior: 'smooth' });
+}
+function copy(text, what) {
+  navigator.clipboard.writeText(text).then(() => toast((what || 'Copied') + ' copied'),
+    () => toast('could not copy', true));
+}
+
+/**
+  * An SVG progress ring, drawn at its true value immediately.
+  *
+  * It used to render empty and sweep to the value over 1.3s. That is a bad
+  * trade for a data display: whenever the animation was throttled — a
+  * background tab, a busy machine, reduced-motion — the ring sat showing a
+  * number that was not the data. A progress indicator has one job and it is
+  * being correct, so the value is in the markup and there is no in-between
+  * state to catch it in. The card's own fade-in supplies the motion.
+  */
+/**
+ * `pct` fills the arc; `label` is what goes in the middle.
+ *
+ * They are deliberately different numbers: the arc is progress, the label is
+ * work outstanding, and both improve as someone works. Passing the percentage
+ * as the label showed a bare "11" beside "8 left" on the same card, which reads
+ * as two contradictory facts about one project.
+ */
+function ring(pct, size, stroke, showN, mark, label) {
+  const r = (size - stroke) / 2, c = 2 * Math.PI * r, has = pct != null;
+  return `<svg viewBox="0 0 ${size} ${size}">
+      <circle class="bgc" cx="${size / 2}" cy="${size / 2}" r="${r}" stroke-width="${stroke}"/>
+      ${has ? `<circle class="fg" cx="${size / 2}" cy="${size / 2}" r="${r}" stroke-width="${stroke}"
+        stroke="${tone(pct)}" style="color:${tone(pct)}"
+        stroke-dasharray="${c}" stroke-dashoffset="${c * (1 - pct / 100)}"/>` : ''}
+    </svg>${mark || ''}${showN && !mark
+      ? `<span class="rv" style="color:${has ? tone(pct) : 'var(--faint)'}">${
+        label != null ? label : (has ? pct : '—')}</span>` : ''}`;
+}
+
+/**
+ * A project's mark — its own icon, or one derived from its name.
+ *
+ * The brief promised per-project identity and the audit found it missing:
+ * every project rendered as identical text, so "ten apps under one roof" read
+ * as ten rows of a table. Most repos do have an icon and it is extracted from
+ * wherever they keep it; the ones that do not — a CLI, a service, a repo
+ * onboarded five minutes ago — get a tile in a hue derived from the name, so
+ * a fleet is still scannable and a project still looks like itself.
+ */
+function markOf(p, size) {
+  const cls = size === 'md' ? 'icontile' : 'appicon';
+  if (p.iconUrl) {
+    return `<img class="${cls}" src="${esc(p.iconUrl)}" alt="" loading="lazy"
+      onerror="this.outerHTML=${esc(JSON.stringify(tile(p, size)))}">`;
+  }
+  return tile(p, size);
+}
+const tile = (p, size) =>
+  `<span class="tile ${size}" style="--p:${Number(p.accent) || 0}"
+     >${esc(String(p.name || '?').trim().charAt(0).toUpperCase() || '?')}</span>`;
+
+/**
+ * The readiness meter, and the number beside it.
+ *
+ * What used to be here was seventeen 5px squares. They carried which check was
+ * which — information the grid already carries far better — and at the size a
+ * card actually gets looked at they were a grey smear. Proportion plus a
+ * count reads at thumbnail size, which is the only job a card has.
+ *
+ * `n/a` is left out of the bar entirely. A web app has no upload keystore;
+ * counting that as unfinished work would be the meter inventing a denominator.
+ */
+function meter(p, opts) {
+  const o = opts || {};
+  const s = p.score;
+  if (!s) return '';
+  const n = { ok: s.passed, gap: s.remaining, unknown: s.unconfirmed };
+  const total = n.ok + n.gap + n.unknown || 1;
+  const bar = ['ok', 'gap', 'unknown']
+    .filter(k => n[k] > 0)
+    .map(k => `<i class="${k}" style="flex:${n[k]}"></i>`).join('');
+  if (o.thin) return `<span class="meter thin" title="${n.ok} done · ${n.gap} left">${bar}</span>`;
+  return `<div class="meter" role="img"
+      aria-label="${n.ok} of ${total} applicable checks done">${bar}</div>
+    <div class="meterlbl"><b class="ok">${n.ok}</b> done
+      ${n.gap ? `· <b class="gap">${n.gap}</b> left` : '· <span class="ok">nothing left</span>'}
+      ${n.unknown ? `· <b class="unknown">${n.unknown}</b> only you can answer` : ''}
+      <span class="spacer"></span>of ${total} that apply</div>`;
+}
+
+/**
+ * Parent + basename, with the whole thing one click away.
+ *
+ * The header used to print the raw absolute path under the title, wrapping
+ * onto two lines. It was the ugliest element on the page and it put a
+ * username and a directory tree into every shared screenshot.
+ */
+function pathButton(path) {
+  const parts = String(path).split('/').filter(Boolean);
+  const base = parts.pop() || path;
+  const parent = parts.pop();
+  return `<button class="pathbtn" title="${esc(path)} — click to copy"
+      onclick="copy(${esc(JSON.stringify(String(path)))},'Path')">${ico('layers', 'sm')}
+      <span>${parent ? `<span class="dim">${esc(parent)}/</span>` : ''}${esc(base)}</span>${ico('copy', 'sm')}</button>`;
+}
+
+/** A date, said the way a person would say it. */
+function when(iso) {
+  if (!iso) return '';
+  const d = new Date(iso);
+  if (isNaN(d)) return '';
+  const days = Math.floor((Date.now() - d.getTime()) / 86400000);
+  if (days < 0) return d.toISOString().slice(0, 10);
+  if (days === 0) return 'today';
+  if (days === 1) return 'yesterday';
+  if (days < 30) return days + ' days ago';
+  return d.toISOString().slice(0, 10);
+}
+
+/* ── sidebar ─────────────────────────────────────────────────────────── */
+function renderNav() {
+  const t = DATA.totals;
+  const items = DATA.projects.map(p => {
+    const ns = p.nightshift;
+    const running = ns.live.state === 'running';
+    const dot = p.problem ? 'var(--faint)' : ns.live.state === 'crashed' ? 'var(--gap)'
+      : ns.enabled ? 'var(--ok)' : ns.configured ? 'var(--warn)' : 'var(--na)';
+    return `<button class="navitem" aria-current="${VIEW.project === p.path}" onclick="go('${esc(p.path)}')">
+        <span class="ring">${ring(p.score ? p.score.score : null, 32, 2.6, true,
+          markOf(p, 'xs'), p.score ? p.score.remaining : null)}</span>
+        <span class="nm">${esc(p.name)}
+          <span class="sub">${running ? '<span class="livedot" style="width:5px;height:5px"></span>'
+              : `<span class="dot" style="width:5px;height:5px;border-radius:50%;background:${dot}"></span>`}
+            ${p.problem ? esc(problemLabel(p))
+              : running ? 'running now'
+              : p.score.remaining === 0 ? 'nothing left'
+              : `${p.score.remaining} left · ${(p.archetypes || []).length} surface${(p.archetypes || []).length === 1 ? '' : 's'}`}
+            ${p.dir ? `· ${dirTag(p)}` : ''}</span>
+          ${p.problem ? '' : meter(p, { thin: true })}
+        </span>
+      </button>`;
+  }).join('');
+
+  $('#navlist').innerHTML = `
+    <div class="navsec">${ico('layers', 'sm')}<span class="lbl">Overview</span></div>
+    <button class="navitem" aria-current="${VIEW.project === null}" onclick="go(null)">
+      <span class="ring">${ring(t.onboarded ? t.averageScore : null, 32, 2.6, true, null,
+        t.onboarded ? t.remaining : '—')}</span>
+      <span class="nm">All projects<span class="sub">${t.projects} app${t.projects === 1 ? '' : 's'}${
+        // Same rule as the hero: nothing scored is not "nothing left", and a
+        // red 0 beside a hero reading "not scored yet" is two answers to one
+        // question.
+        t.onboarded ? ` · ${t.remaining} left` : ' · not scored yet'}</span></span>
+    </button>
+    <div class="navsec">${ico('box', 'sm')}<span class="lbl">Projects</span></div>${items}`;
+
+  /**
+   * Shown only when it is NOT live, deliberately.
+   *
+   * A permanent "live" badge is a claim the page cannot keep — `fs.watch` is
+   * refused outright on some network and container filesystems — and a badge
+   * that is always green teaches people to stop reading it. Silence means the
+   * repositories are being watched; a line here means the numbers can be up to
+   * fifteen seconds old, and says why.
+   */
+  const stale = WATCH && WATCH.degraded
+    ? `<div class="row" title="${esc(WATCH.reason || '')}">${ico('clock', 'sm')}
+        <span style="color:var(--warn)">${esc(WATCH.reason || 'refreshing on a timer')}</span></div>`
+    : '';
+  $('#navfoot').innerHTML = `
+    <div class="row">${ico('moon', 'sm')}<b>${t.readyTonight}</b> running tonight</div>
+    <div class="row">${ico('route', 'sm')}<b>${t.tasksReady}</b> ready · <b>${t.tasksBlocked}</b> blocked</div>
+    ${t.inbox ? `<div class="row">${ico('spark', 'sm')}<b>${t.inbox}</b> awaiting grooming</div>` : ''}
+    ${stale}`;
+}
+
+/* ── header + tabs ───────────────────────────────────────────────────── */
+const TABS = [
+  ['readiness', 'Readiness', 'shield'],
+  ['deploy',    'Build & Release', 'rocket'],
+  ['decisions', 'Decisions', 'bulb'],
+  ['roadmap',   'Roadmap', 'route'],
+  ['secrets',   'Keys', 'key'],
+  ['marketing', 'Marketing', 'mega'],
+];
+
+function renderTop() {
+  const p = cur();
+  if (!p) {
+    $('#top').innerHTML = `
+      <div class="crumb">${ico('grid', 'sm')}<span class="lbl">Fleet</span></div>
+      <div class="title"><h1>All projects</h1></div>
+      <div class="subtitle">${ico('spark', 'sm')}${
+        // "Nothing left" and "nothing measured yet" are opposite facts and used
+        // to render as the same sentence — so a fleet in which no project had
+        // been onboarded congratulated its owner for having finished.
+        DATA.totals.onboarded === 0
+          ? 'Nothing has been onboarded yet. Run /launchpad:onboard in a repo and it appears here.'
+          : DATA.totals.remaining === 0 ? 'Every app you own. Nothing left that launchpad can see.'
+          : `Every app you own, and the ${DATA.totals.remaining} thing${DATA.totals.remaining === 1 ? '' : 's'} between them and being products.`}</div>`;
+    $('#tabsrow').innerHTML = '';
+    return;
+  }
+  const ns = p.nightshift;
+  const pills = [
+    ...(p.archetypes || []).map(platBadge),
+    // "Overnight" everywhere in the UI. Nightshift is the product name and the
+    // CLI verb; what a user cares about here is when it runs.
+    ns.live.state === 'running' ? `<span class="pill live"><span class="livedot"></span>running now</span>`
+      : ns.live.state === 'crashed' ? `<span class="pill danger">${ico('alert')}stopped mid-run</span>`
+      : ns.enabled ? `<span class="pill live">${ico('moon')}overnight on</span>` : '',
+  ].join('');
+  $('#top').innerHTML = `
+    <div class="crumb">${ico('box', 'sm')}<span class="lbl">Project</span>${ico('chev', 'sm')}
+      <span class="lbl" style="color:var(--acc)">${esc(p.name)}</span></div>
+    <div class="title">${markOf(p, 'md')}
+      <h1>${esc(p.name)}</h1>${pills}</div>
+    <div class="subtitle">${pathButton(p.path)}
+      <button class="btn ghost sm" style="margin-left:auto" onclick="removeProject(${DATA.projects.indexOf(p)})"
+        title="Remove from the list; the repo is untouched">${ico('minus', 'sm')}Stop tracking</button></div>`;
+
+  const counts = {
+    readiness: p.score ? p.score.applicable - p.score.passed : 0,
+    roadmap: ns.counts.ready,
+    secrets: p.secrets.filter(s => !s.present).length,
+  };
+  $('#tabsrow').innerHTML = `<div class="tabs">${TABS.map(([k, l, i]) => `
+    <button class="tab" aria-selected="${VIEW.tab === k}" onclick="go('${esc(p.path)}','${k}')">
+      ${ico(i)}${l}${counts[k] ? `<span class="badge">${counts[k]}</span>` : ''}
+    </button>`).join('')}</div>`;
+}
+
+/* ── fleet ───────────────────────────────────────────────────────────── */
+function paneFleet() {
+  const t = DATA.totals;
+  if (!DATA.projects.length) {
+    return `<div class="soon">${ico('box')}<b>No projects yet</b>
+      Register one with <code>launchpad add &lt;path&gt;</code>, or run
+      <code>/launchpad:onboard</code> inside a repo.</div>`;
+  }
+  /**
+   * The number strip.
+   *
+   * Three of these used to read `0 TASKS READY`, `0 BLOCKED`, `0 RUN TONIGHT`
+   * in a row, which on the screen that is supposed to sell this reads as
+   * "nothing is happening". Two changes. The first three tiles are now facts
+   * about what exists rather than about a queue — done, apps, shipping
+   * channels — and a queue tile only appears when there is a queue. A tile
+   * that would say zero says nothing instead, because a zero here is the
+   * absence of news, not news.
+   */
+  const tiles = [
+    `<div class="hs"><div class="n">${t.projects}</div><div class="lbl l">Apps</div></div>`,
+    t.done ? `<div class="hs good"><div class="n">${t.done}</div><div class="lbl l">Checks passed</div></div>` : '',
+    t.channels ? `<div class="hs good"><div class="n">${t.channels}</div>
+      <div class="lbl l">Shipping channels</div></div>` : '',
+    t.criticalGaps
+      ? `<div class="hs warn"><div class="n">${t.criticalGaps}</div><div class="lbl l">Critical gaps</div></div>`
+      : t.released ? `<div class="hs good"><div class="n">${t.released}</div><div class="lbl l">Have released</div></div>` : '',
+    t.tasksReady ? `<div class="hs"><div class="n">${t.tasksReady}</div><div class="lbl l">Tasks ready</div></div>` : '',
+    t.tasksBlocked ? `<div class="hs warn"><div class="n">${t.tasksBlocked}</div><div class="lbl l">Blocked</div></div>` : '',
+    t.readyTonight ? `<div class="hs"><div class="n">${t.readyTonight}</div><div class="lbl l">Run tonight</div></div>` : '',
+  ].filter(Boolean).join('');
+
+  // `averageScore` is 0 when nothing has been scored, and 0 paints a full red
+  // ring around a red zero — which says "everything here is broken" about a
+  // fleet nothing has looked at yet. No data draws no arc.
+  const scored = t.onboarded > 0;
+  const hero = `
+    <div class="hero"${rise(0)}>
+      <div class="bigring">${ring(scored ? t.averageScore : null, 112, 7, false)}
+        <div class="mid"><span><span class="rv ${TICK ? 'tick' : ''}"
+            style="color:${scored ? tone(t.averageScore) : 'var(--faint)'}">${scored ? t.remaining : '—'}</span>
+          <span class="lbl">${!scored ? 'not scored yet' : t.remaining === 1 ? 'thing left' : 'things left'}</span></span></div></div>
+      <div class="herostats">${tiles}</div>
+    </div>`;
+
+  const cards = DATA.projects.map((p, i) => {
+    // `=== 'gap'`, matching the hero: an unanswered question is not a failure.
+    const crit = p.score ? p.score.checks.filter(c => c.critical && c.grade === 'gap').length : 0;
+    const ns = p.nightshift;
+    const live = (p.live || [])[0];
+    return `<div class="pcard"${rise(i * 45)} style="--p:${Number(p.accent) || 0}"
+        onclick="go('${esc(p.path)}')">
+      <div class="ph">
+        <span class="ring">${ring(p.score ? p.score.score : null, 32, 2.6, true,
+          markOf(p, 'xs'), p.score ? p.score.remaining : null)}</span>
+        <span class="nm"><b>${esc(p.name)}</b>
+          <span class="plats">${p.problem ? `<span class="plat">${esc(problemLabel(p))}</span>`
+            : (p.archetypes || []).length ? (p.archetypes || []).map(platBadge).join('')
+            : '<span class="plat" title="launchpad ships no pipeline for this kind of project — the scorecard and roadmap still do">no build surface</span>'}</span></span>
+      </div>
+      ${p.problem ? `<div class="empty">${ico('help', 'sm')}${esc(p.problem)}</div>
+         ${p.dir ? `<div class="pf">${dirTag(p)}</div>` : ''}`
+        : `${meter(p)}
+           <div class="pf">
+             ${dirTag(p)}
+             ${crit ? `<span style="color:var(--gap)">${crit} critical</span>`
+               : live ? `<span title="${esc(live.evidence)}">${esc(live.ref || 'never released')}</span>`
+               : '<span>no channel yet</span>'}
+             <span class="spacer"></span>
+             ${ns.live.state === 'running' ? `<span style="color:var(--ok)">running now</span>`
+               : ns.enabled ? `<span style="color:var(--ok);display:inline-flex;gap:5px;align-items:center">${ico('moon', 'sm')}tonight</span>`
+               : ns.counts.ready ? `${ns.counts.ready} ready` : ''}
+           </div>`}
+    </div>`;
+  }).join('');
+
+  /**
+   * Checks down the side, apps across the top — the transpose.
+   *
+   * The columns used to be the seventeen checks, which left 36px per label and
+   * forced them onto their side in a 126px rotated band. Seventeen rotated
+   * labels is the worst thing that was on this page. Checks are the long list;
+   * long lists go down.
+   */
+  // The tooltip carries the qualifier: `.pname` stays the name itself so a
+  // column of app names reads as a column of app names.
+  const head = DATA.projects.map((p, pi) => `<th class="phead">
+      <button onclick="go('${esc(p.path)}')" title="${esc(labelOf(p))}">
+        ${markOf(p, 'sm')}
+        <span class="pname">${esc(p.name)}</span>
+        <span class="pmeta">${p.problem ? '—' : p.score.remaining === 0 ? 'ready' : p.score.remaining + ' left'}</span>
+      </button></th>`).join('');
+
+  const rows = DATA.columns.map(col => {
+    const cells = DATA.projects.map((p, pi) => {
+      if (p.problem) {
+        return `<td><span class="cell na" title="${esc(p.name)} — ${esc(p.problem)}"></span></td>`;
+      }
+      const c = p.score.checks.find(x => x.id === col.id);
+      const g = !c ? 'na' : c.grade === 'n/a' ? 'na' : c.grade;
+      const crit = c && c.critical && c.grade === 'gap' ? ' crit' : '';
+      const fresh = ARRIVED.has(p.path + '|' + col.id) ? ' arrived' : '';
+      return `<td><button class="cell ${g}${crit}${fresh}"
+        title="${esc(p.name)} — ${esc(c ? c.title : col.short)}"
+        onclick="openCheck(${pi},'${col.id}')"></button></td>`;
+    }).join('');
+    // A check is critical for this fleet if it is critical and unmet anywhere.
+    const critAnywhere = DATA.projects.some(p => p.score
+      && p.score.checks.some(c => c.id === col.id && c.critical && c.grade === 'gap'));
+    return `<tr><td class="rowhead"><span class="rh">${
+      critAnywhere ? '<span class="crit" title="critical somewhere in this fleet"></span>' : ''
+    }${esc(col.short)}</span></td>${cells}</tr>`;
+  }).join('');
+
+  return `${hero}
+    <div class="pcards">${cards}</div>
+    ${paneLive()}
+    <div class="lanehead">${ico('grid', 'sm')}<span class="lbl">The full rubric</span>
+      <span class="n" style="margin-left:auto;font-family:var(--mono);font-size:11px;color:var(--faint)">
+        click a square for what it costs</span></div>
+    <div class="gridwrap"${rise(120)}><table class="grid">
+      <thead><tr><th class="corner"><span class="lbl">Check</span></th>${head}</tr></thead>
+      <tbody>${rows}</tbody></table></div>
+    <div class="legend">
+      <span><i style="background:var(--ok)"></i>done</span>
+      <span><i style="background:var(--gap)"></i>gap</span>
+      <span><i style="background:var(--warn)"></i>can't tell</span>
+      <span><i style="background:var(--na)"></i>n/a</span>
+    </div>
+    <div class="card" style="margin-top:20px"><div class="h"><h3>${ico('plus')}Add a project</h3>
+      <span class="spacer"></span><span class="lbl">any git repo — onboarded or not</span></div>
+      <div class="b">
+        <div class="ideabox">
+          <input id="addpath" placeholder="~/Code/my-app" onkeydown="if(event.key==='Enter')addProject()">
+          <button class="btn" onclick="addProject()">${ico('plus', 'sm')}Add</button>
+        </div>
+        <div class="empty" style="padding-top:10px">${ico('help', 'sm')}<span>
+          A repo that has not been onboarded still appears — as a row saying so, with the command to fix it.
+          The interview that works out what a repo <em>is</em> belongs in Claude Code, where it can ask you
+          things.</span></div>
+      </div></div>`;
+}
+
+/**
+ * What's live where.
+ *
+ * The one thing a person with six apps wants at a glance, and the honest
+ * version of it. launchpad has no account with Apple, Google, Vercel or
+ * Cloudflare and never will — so it cannot tell you a build passed review, and
+ * this panel does not pretend to. It reports two facts it can read off `.git`:
+ * the newest tag, for surfaces that ship when you tag, and the head commit,
+ * for surfaces that deploy when you push. Every row prints which of the two it
+ * is looking at, in the column on the right, every time.
+ *
+ * That caveat is the feature. A dashboard that claimed "live" from a tag would
+ * be wrong the first time a submission was rejected, and being wrong about
+ * *that* is how a tool that also holds your signing keys loses the argument.
+ */
+function liveRows(projects) {
+  const rows = [];
+  for (const p of projects) {
+    for (const l of p.live || []) {
+      rows.push(`<div class="liverow">
+        <span class="who">${markOf(p, 'xs')}<b>${esc(p.name)}</b>${dirTag(p)}</span>
+        <span class="chan">${platBadge(l.archetype)} ${esc(l.channel)}</span>
+        <span class="ver ${l.ref ? '' : 'none'}">${esc(l.ref || '—')}</span>
+        <span class="ev">${esc(l.evidence)}${l.at ? ' · ' + esc(when(l.at)) : ''}</span>
+      </div>`);
+    }
+  }
+  return rows;
+}
+
+function paneLive() {
+  const rows = liveRows(DATA.projects);
+  if (!rows.length) return '';
+  return `<div class="card"${rise(90)}><div class="h"><h3>${ico('zap')}What's live where</h3>
+      <span class="spacer"></span>
+      <span class="lbl">read from your refs — launchpad never calls a store</span></div>
+    <div class="b"><div class="lives">${rows.join('')}</div>
+      <div class="empty" style="padding-top:11px">${ico('help', 'sm')}
+        A tag says a release was cut, not that a store accepted it; a commit says what a push would
+        deploy. Both are things this repository can prove. Nothing here is fetched from anyone's API.
+      </div></div></div>`;
+}
+
+/* ── project panes ───────────────────────────────────────────────────── */
+function paneReadiness(p, pi) {
+  if (p.problem) return notOnboarded(p);
+  const order = { gap: 0, unknown: 1, ok: 2, 'n/a': 3 };
+  const checks = [...p.score.checks].sort((a, b) =>
+    (a.critical && a.grade !== 'ok' ? -1 : 0) - (b.critical && b.grade !== 'ok' ? -1 : 0)
+    || order[a.grade] - order[b.grade]);
+  return `
+    <div class="note">${ico('shield')}<span><b>${p.score.remaining === 0
+        ? 'Nothing left that launchpad can see.'
+        : `${p.score.remaining} thing${p.score.remaining === 1 ? '' : 's'} between this and a product.`}</b>
+      ${p.score.next ? `Start with <b>${esc(p.score.next.title.toLowerCase())}</b>. ` : ''}Every one names what it
+      actually costs — that list is the thing most people have never seen.${p.score.unconfirmed
+        ? ` ${p.score.unconfirmed} ${p.score.unconfirmed === 1 ? 'is' : 'are'} only yours to answer, and ${p.score.unconfirmed === 1 ? 'is' : 'are'} not counted against you.`
+        : ''}</span></div>
+    <div class="checks">${checks.map((c, i) => `
+      <button class="check"${rise(Math.min(i * 26, 320))} onclick="openCheck(${pi},'${c.id}')">
+        <span class="chip ${c.grade === 'n/a' ? 'na' : c.grade}">${ico(GRADE_ICON[c.grade], 'sm')}</span>
+        <span class="t"><b>${esc(c.title)}</b>
+          ${c.critical && c.grade !== 'ok' ? '<span class="pill danger" style="margin-left:9px">critical</span>' : ''}
+          ${c.grade !== 'ok' && c.detail ? `<p>${esc(c.detail)}</p>` : ''}</span>
+        ${ico('chev', 'sm')}
+      </button>`).join('')}</div>`;
+}
+
+function paneDeploy(p) {
+  if (p.problem) return notOnboarded(p);
+  const surfaces = p.surfaces_detail.map((s, i) => `
+    <div class="card"${rise(i * 55)}>
+      <div class="h"><h3>${ico(PLATFORM[s.archetype] ? PLATFORM[s.archetype][0] : 'box')}${esc(s.id)}</h3>
+        ${platBadge(s.archetype)}
+        <span class="pill ${s.status === 'wired' ? 'live' : 'warn'}">${esc(s.status)}</span></div>
+      <div class="b">
+        <div class="empty" style="padding:0 0 12px">${ico('help', 'sm')}Detected because: ${esc(s.evidence.join('; ') || 'n/a')}</div>
+        ${s.config ? `<table class="kv">${Object.entries(s.config)
+          .filter(([, v]) => v !== '' && v != null && !(Array.isArray(v) && !v.length))
+          .map(([k, v]) => `<tr><td><span class="lbl">${esc(k)}</span></td><td><code>${esc(
+            Array.isArray(v) ? v.join(', ') : typeof v === 'object' ? JSON.stringify(v) : v)}</code></td></tr>`)
+          .join('')}</table>` : `<div class="empty">${ico('minus', 'sm')}No config gathered yet.</div>`}
+      </div></div>`).join('');
+
+  const pipes = p.pipelines.length ? `
+    <div class="card"><div class="h"><h3>${ico('layers')}Pipelines that were already here</h3></div><div class="b">
+      <table class="kv">${p.pipelines.map(x => `<tr><td><span class="lbl">${esc(x.kind)}</span></td>
+        <td><code>${esc(x.path)}</code> <span class="pill">${esc(x.disposition || 'undecided')}</span></td></tr>`).join('')}</table>
+      </div></div>` : '';
+
+  const a = p.assets || { screenshots: 0, featureGraphic: false };
+  const store = `
+    <div class="card"><div class="h"><h3>${ico('spark')}Store presence</h3>
+      <span class="spacer"></span>
+      <span class="lbl">what a store wants before it will show your app</span></div>
+      <div class="b">
+        <div style="display:flex;gap:16px;align-items:flex-start;flex-wrap:wrap">
+          ${p.iconUrl ? `<img class="icontile" style="width:64px;height:64px;border-radius:14px"
+            src="${esc(p.iconUrl)}" alt="" onerror="this.remove()">` : ''}
+          <table class="kv kvflex">
+            <tr><td><span class="lbl">App icon</span></td><td>${a.icon
+              ? `<code>${esc(a.icon.path)}</code> — ${a.icon.width || '?'}×${a.icon.height || '?'}${
+                  a.icon.hasAlpha ? ' <span class="pill danger">has alpha</span>' : ''}`
+              : '<span class="pill danger">none found</span>'}</td></tr>
+            <tr><td><span class="lbl">Screenshots</span></td><td>${a.screenshots
+              ? `${a.screenshots} found` : '<span class="pill warn">none found</span>'}</td></tr>
+            <tr><td><span class="lbl">Feature graphic</span></td><td>${a.featureGraphic
+              ? '<span class="pill live">present</span>'
+              : longPill('warn', null, 'none — Play requires 1024×500')}</td></tr>
+            <tr><td><span class="lbl">Listing metadata</span></td><td>${a.listingDir
+              ? `<code>${esc(a.listingDir)}</code>` : '<span class="pill warn">none found</span>'}</td></tr>
+          </table>
+        </div>
+      </div></div>`;
+
+  const live = (p.live || []).length ? `
+    <div class="card"><div class="h"><h3>${ico('zap')}Where this ships</h3>
+      <span class="spacer"></span><span class="lbl">read from this repo's refs</span></div>
+      <div class="b"><div class="lives">${(p.live || []).map(l => `
+        <div class="liverow">
+          <span class="who">${platBadge(l.archetype)}<b>${esc(l.surface)}</b></span>
+          <span class="chan">${esc(l.channel)}</span>
+          <span class="ver ${l.ref ? '' : 'none'}">${esc(l.ref || '—')}</span>
+          <span class="ev">${esc(l.evidence)}${l.at ? ' · ' + esc(when(l.at)) : ''}</span>
+        </div>`).join('')}</div></div></div>` : '';
+
+  return `<div class="note">${ico('rocket')}<span><b>A release is a deliberate act</b>, never a side effect of
+    pushing. Cut one with <code>/launchpad:release</code> in this repo.</span></div>
+    ${live}${surfaces || `<div class="note">${ico('help')}<span><b>No build surface here.</b>
+      launchpad ships pipelines for iOS, Android, macOS apps, web apps and static sites, and this repo
+      is none of those — a real limit rather than a detection failure. Readiness and the roadmap still
+      apply in full; most of the checklist has nothing to do with what a project is built in.</span></div>`}${pipes}${store}`;
+}
+
+function paneDecisions(p) {
+  if (p.problem) return notOnboarded(p);
+  if (!p.decisions.length) return `<div class="empty">${ico('minus', 'sm')}Nothing wired yet, so nothing decided.</div>`;
+  const ahead = p.decisions.filter(d => d.proposed).length;
+  /**
+   * Before `apply`, these are proposals — and they are also the pitch. The panel
+   * says which it is looking at, because a plan presented as an accomplished
+   * fact is the one thing that would make this screen worthless.
+   */
+  const note = ahead === p.decisions.filter(d => d.source === 'launchpad').length && ahead > 0
+    ? `<b>This is what launchpad would do here, and why.</b> Nothing below has happened yet — the
+       reasoning is the part that took years of failed runs to learn, so you get to read it before
+       you decide anything.`
+    : `<b>This is what you actually bought.</b> The pipelines are commodity — these choices, and the
+       reasons under them, are the part that took years of failed runs to learn.`;
+  return `
+    <div class="note">${ico('bulb')}<span>${note}</span></div>
+    <div class="card">${p.decisions.map((d, i) => `
+      <div class="dec"${rise(Math.min(i * 24, 300))}>
+        <span class="lbl">${esc(d.area)}</span>
+        <div class="t2"><span class="ch">${esc(d.choice)}</span>
+          <span class="pill ${d.source === 'yours' ? '' : d.proposed ? '' : 'acc'}">
+            ${ico(d.source === 'yours' ? 'shield' : d.proposed ? 'route' : 'spark')}${
+              d.source === 'yours' ? 'yours, kept' : d.proposed ? 'would choose' : 'launchpad chose'}</span>
+          ${d.cost ? longPill('warn', 'zap', d.cost) : ''}</div>
+        <p class="wy">${esc(d.why)}</p>
+      </div>`).join('')}</div>`;
+}
+
+/**
+ * Roadmap — the work, and only then who runs it.
+ *
+ * "Tonight" put a scheduling window in front of the backlog, which is backwards:
+ * the backlog is the project's roadmap, and Nightshift is one of two ways to
+ * execute it. A fresh Claude session is the other, so both appear here as peers
+ * and every ready task offers a prompt you can paste into one right now.
+ */
+function paneRoadmap(p, pi) {
+  if (p.problem) return notOnboarded(p);
+  const n = p.nightshift;
+  if (!n.configured) {
+    return `<div class="note">${ico('moon')}<span><b>No roadmap here yet.</b> Set one up and you get a backlog
+      this project owns, plus the option of an overnight worker. It stays off until you say otherwise —
+      an agent that writes code overnight should never switch itself on.</span></div>
+      <code class="cmd">${ico('play', 'sm')}/launchpad:nightshift</code>`;
+  }
+
+  const lane = (title, icon, items, opts) => !items.length ? '' : `
+    <div class="lane"><div class="lanehead">${ico(icon, 'sm')}<span class="lbl">${title}</span>
+      <span class="n">${items.length}</span></div>
+      <ul class="tasks">${items.slice(0, opts && opts.max || 10).map((t, i) => `
+        <li class="${opts && opts.highlightFirst && i === 0 ? 'first' : ''}">
+          <span class="tid">${esc(t.id)}</span>
+          <span class="ttitle">${esc(t.title)}
+            ${t.reason ? `<span class="treason">${ico('alert', 'sm')}${esc(t.reason)}</span>` : ''}
+            ${t.status === 'blocked' && !t.reason
+              ? `<span class="treason">${ico('alert', 'sm')}no reason recorded — suspect a transient failure</span>` : ''}
+          </span>
+          ${opts && opts.actions ? opts.actions(t, i) : (t.priority != null ? `<span class="tid">P${t.priority}</span>` : '')}
+        </li>`).join('')}</ul>
+      ${items.length > (opts && opts.max || 10) ? `<div class="empty">${ico('minus', 'sm')}+ ${items.length - (opts && opts.max || 10)} more</div>` : ''}
+    </div>`;
+
+  const runNow = t => `<button class="btn ghost sm" onclick="event.stopPropagation();promptFor(${pi},'${esc(t.id)}')">
+      ${ico('play', 'sm')}Work on it</button>`;
+
+  const ready = n.queue.map(t => t);
+  const inboxItems = n.inbox.map((l, i) => ({ id: '—', title: l, status: 'idea' }));
+
+  const livebar = n.live.state === 'running'
+    ? `<div class="livebar"><span class="livedot"></span><b>Running now</b>
+        <span style="color:var(--muted)">${esc(n.liveLabel)}</span></div>`
+    : n.live.state === 'crashed'
+      ? `<div class="livebar dead"><span class="livedot"></span><b>Stopped mid-run</b>
+          <span style="color:var(--muted)">${esc(n.liveLabel)}</span></div>`
+      : '';
+
+  return `
+    ${livebar}
+    <div class="card"><div class="h"><h3>${ico('spark')}Capture an idea</h3>
+      <span class="spacer"></span>
+      <span class="lbl">goes straight into this project's backlog</span></div>
+      <div class="b">
+        <div class="ideabox">
+          <input id="idea-${pi}" placeholder="Something to build…"
+            onkeydown="if(event.key==='Enter')sendIdea(${pi})">
+          <button class="btn" onclick="sendIdea(${pi})">${ico('plus', 'sm')}Capture</button>
+        </div>
+      </div></div>
+
+    <div class="execs">
+      <div class="exec ${n.enabled ? 'on' : ''}">
+        <div class="eh">${ico('moon', 'lg')}<b>Overnight</b><span class="spacer"></span>
+          <span class="toggle"><button class="switch" data-on="${n.enabled}" onclick="toggleProject(${pi})"
+            aria-label="Nightshift on or off"></button>${n.enabled ? 'on' : 'off'}</span></div>
+        <p>${n.problems.length
+          ? `Will not run: ${n.problems.map(esc).join(' · ')}`
+          : `Runs ${esc(n.window)}, up to ${n.maxTasksPerNight} task(s), gated by <code>${esc(n.gate)}</code>,
+             landing as ${n.mode === 'pr' ? 'pull requests' : `pushes to <code>${esc(n.baseBranch)}</code>`}.`}</p>
+        <div style="display:flex;gap:6px;flex-wrap:wrap">
+          <span class="pill ${n.mode === 'push' ? 'danger' : 'acc'}">${esc(n.mode === 'pr' ? 'opens PRs' : 'pushes')}</span>
+          <span class="pill">${ico('clock')}${esc(n.window)}</span>
+          <span class="pill ${n.groom ? 'acc' : ''}">${n.groom ? 'grooms first' : 'grooming off'}</span>
+        </div>
+      </div>
+      <div class="exec">
+        <div class="eh">${ico('zap', 'lg')}<b>Right now</b></div>
+        <p>The same backlog, run attended. Open Claude Code in this repo and hand it the top task —
+          <b>Work on it</b> copies a prompt that points at the task file and the gate.</p>
+        <div style="display:flex;gap:6px;flex-wrap:wrap">
+          <span class="pill">${ico('shield')}same gate</span><span class="pill">${ico('route')}same backlog</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="card"><div class="h"><h3>${ico('plus')}Add a task</h3>
+      <span class="spacer"></span><span class="lbl">straight to the queue, no grooming</span></div>
+      <div class="b"><div class="ideabox">
+        <input id="newtask-${pi}" placeholder="Something you already know you want…"
+          onkeydown="if(event.key==='Enter')addTask(${pi})">
+        <select id="newprio-${pi}" style="padding:0 10px;border-radius:11px;border:1px solid var(--line2);
+          background:var(--e0);color:var(--ink);font:inherit;font-size:13px">
+          <option value="0">P0</option><option value="1" selected>P1</option><option value="2">P2</option>
+        </select>
+        <button class="btn" onclick="addTask(${pi})">${ico('plus', 'sm')}Add</button>
+      </div></div></div>
+
+    <div class="card"><div class="h"><h3>${ico('route')}Backlog</h3>
+      ${n.backlogDir ? `<span class="pill">${esc(n.backlogDir)}</span>` : ''}
+      <span class="spacer"></span>
+      <span class="lbl">${n.counts.total} total · ${n.counts.done} done</span></div>
+      <div class="b">
+        ${lane('Waiting to be groomed', 'spark', inboxItems, { max: 6 })}
+        ${lane('Needs your decision', 'help', n.needsDecision.map(d => ({
+          id: d.id, title: d.title, status: 'idea', reason: d.why,
+        })), { max: 10, actions: t =>
+          `<button class="btn ghost sm" onclick="setTask(${pi},'${esc(t.id)}','ready')">
+            ${ico('check', 'sm')}It's ready</button>` })}
+        ${lane('Next up', 'play', ready, { highlightFirst: true, actions: (t, i) =>
+          `<span style="display:flex;gap:6px;align-items:center">${i === 0
+            ? `<span class="nowtag">${ico('chev', 'sm')}first</span>` : ''}
+            <span class="prio">${[0, 1, 2].map(n => `<button class="${t.priority === n ? 'on' : ''}"
+              title="Priority ${n}" onclick="event.stopPropagation();setPrio(${pi},'${esc(t.id)}',${n})">P${n}</button>`).join('')}</span>
+            ${runNow(t)}</span>` })}
+        ${lane('Blocked', 'alert', n.blocked, { max: 20, actions: t =>
+          `<span style="display:flex;gap:6px">
+            <button class="btn ghost sm" onclick="setTask(${pi},'${esc(t.id)}','ready')">${ico('refresh', 'sm')}Retry</button>
+            <button class="btn ghost sm" onclick="setTask(${pi},'${esc(t.id)}','scoped')">Re-scope</button></span>` })}
+        ${!ready.length && !n.blocked.length && !inboxItems.length
+          ? `<div class="empty">${ico('check', 'sm')}Nothing queued. ${n.counts.idea + n.counts.scoped
+              ? `${n.counts.idea + n.counts.scoped} task(s) still need grooming.`
+              : 'A finished backlog is a good outcome.'}</div>` : ''}
+        <div class="legend" style="margin-top:4px">
+          <span>${n.counts.ready} ready</span><span>${n.counts.scoped} scoped</span>
+          <span>${n.counts.idea} idea</span><span>${n.counts.blocked} blocked</span>
+          <span>${n.counts.done} done</span></div>
+      </div></div>
+
+    ${p.lastNight.length ? `
+    <div class="card"><div class="h"><h3>${ico('clock')}${esc(p.lastNightDate || 'Last run')}</h3>
+      <span class="spacer"></span><span class="lbl">derived from what was observed, never from what the agent claimed</span></div>
+      <div class="b"><ul class="tasks">${p.lastNight.map(r => `
+        <li><span class="tid">${esc(r.taskId)}</span>
+          <span class="ttitle">${esc(r.title)}${r.commit ? ` <span class="tid">${esc(r.commit)}</span>` : ''}</span>
+          <span class="outcome ${esc(r.outcome)}">${esc(r.outcome.replace('-', ' '))}</span></li>`).join('')}</ul>
+      </div></div>` : ''}`;
+}
+
+function paneSecrets(p) {
+  if (p.problem) return notOnboarded(p);
+  if (!p.secrets.length) return `<div class="empty">${ico('check', 'sm')}This project needs no credentials.</div>`;
+  const missing = p.secrets.filter(s => !s.present).length;
+  return `
+    <div class="note">${ico('key')}<span><b>Presence only — values are never read, sent or displayed.</b>
+      They live in your OS keychain and go straight to GitHub via <code>launchpad secrets</code>.</span></div>
+    ${missing ? `<div class="note bad">${ico('alert')}<span><b>${missing} missing.</b> Run
+      <code>/launchpad:doctor</code> here — it names exactly where to get each one and what role it needs.</span></div>` : ''}
+    <div class="card"><div class="b"><table class="kv">${p.secrets.map(s => `
+      <tr><td><code>${esc(s.key)}</code></td>
+      <td style="text-align:right">${s.present ? `<span class="pill live">${ico('check')}in vault</span>`
+        : `<span class="pill danger">${ico('alert')}missing</span>`}</td></tr>`).join('')}</table></div></div>`;
+}
+
+const paneMarketing = () => `
+  <div class="soon">${ico('mega', 'lg')}<b>Coming</b>
+    The marketing engine is being finished separately. Nothing here posts anything yet, and this section
+    stays visibly empty rather than half-working.</div>`;
+
+/**
+ * The panel for a row that has no data — and it matters which reason.
+ *
+ * It used to say "is not onboarded yet" for all three, including a `state.yml`
+ * that exists and will not parse. That project IS onboarded, and the command
+ * underneath re-ran the interview over it: launchpad would have rewritten the
+ * file from a fresh detection and thrown away whatever configuration the user
+ * had gathered. So a broken state file gets the parse error and the two safe
+ * moves, and no `onboard`.
+ */
+const notOnboarded = p => {
+  if (p.problemKind === 'unreadable-state') {
+    return `
+      <div class="note bad">${ico('alert')}<span><b>${esc(p.name)} is set up, but launchpad cannot read its
+        state file.</b> <code>.launchpad/state.yml</code> exists and does not parse, so nothing on this
+        project can be scored until it does. This is not a project that needs onboarding — re-running
+        onboard here would rewrite the file from scratch and discard whatever is in it.</span></div>
+      <div class="note">${ico('help')}<span><b>What the parser said.</b>
+        ${esc(String(p.problem || '').replace(/^\.launchpad\/state\.yml cannot be read — /, ''))}</span></div>
+      <div class="note">${ico('shield')}<span><b>Two ways out.</b> Fix the line the parser names — the file
+        is small and hand-editable YAML — or delete it and run onboard again, which starts from a fresh
+        detection and loses any per-surface config that was gathered.</span></div>
+      <code class="cmd">${ico('play', 'sm')}\$EDITOR .launchpad/state.yml</code>`;
+  }
+  if (p.problemKind === 'missing-directory') {
+    return `
+      <div class="note bad">${ico('alert')}<span><b>${esc(p.name)} is not on disk any more.</b>
+        ${esc(p.problem || '')} Nothing was deleted by launchpad — the registry holds paths only. If the
+        repository moved, stop tracking this row and add it at its new location.</span></div>`;
+  }
+  return `
+  <div class="note">${ico('help')}<span><b>${esc(p.name)} is not onboarded yet.</b> ${esc(p.problem || '')}</span></div>
+  <code class="cmd">${ico('play', 'sm')}/launchpad:onboard</code>`;
+};
+
+/* ── drawer ──────────────────────────────────────────────────────────── */
+const PIPELINE_FIX = {
+  'ci-build': '/launchpad:setup   then   /launchpad:apply',
+  'test-gate': '/launchpad:setup   then   /launchpad:apply',
+  'distribution': '/launchpad:setup   then   /launchpad:apply',
+  'notarization': '/launchpad:setup   then   /launchpad:apply',
+  'android-signing': '/launchpad:setup   then   /launchpad:apply',
+  'auto-update': '/launchpad:setup   then   /launchpad:apply',
+  'versioning': '/launchpad:release',
+  'secrets-hygiene': '/launchpad:doctor',
+  'keystore-backup': '/launchpad:doctor',
+};
+
+function openCheck(pi, id) {
+  const p = DATA.projects[pi];
+  const c = (p.score ? p.score.checks : []).find(x => x.id === id);
+  const col = DATA.columns.find(x => x.id === id);
+  if (!c) {
+    return drawer(p.name, col ? col.short : id,
+      `<p>Not applicable here — nothing to do. A web app has no upload keystore, and a library has
+       nothing to notarize.</p>`);
+  }
+  const cmd = PIPELINE_FIX[id];
+  let body = c.grade === 'ok'
+    ? (c.confirmedAt
+      // Attributed, not verified. launchpad did not see this; the user said it.
+      ? `<p style="display:flex;gap:9px;align-items:center">${ico('check')}You confirmed this${
+        c.confirmedAt === 'unknown' ? '' : ` on ${esc(c.confirmedAt)}`}.</p>
+         <p style="margin-bottom:12px">launchpad cannot check this one itself, so it is recorded as your
+         answer rather than as a verified fact.</p>
+         <button class="btn ghost sm" onclick="answerCheck(${pi},'${id}',false)">
+           ${ico('x', 'sm')}Actually, ask me again</button>`
+      : `<p style="color:var(--ok);display:flex;gap:9px;align-items:center">${ico('check')}This one is done.</p>`)
+    : `<p>${esc(c.detail)}</p>`;
+  /**
+   * The dead end, given an exit.
+   *
+   * A `?` used to say "only you can confirm this" and then offer no way to
+   * confirm anything — so it sat there forever, and two of them were marked
+   * critical, meaning every Android project showed a permanent critical warning
+   * no action could clear. A question asked every time and never answerable is
+   * not diligence, it is nagging, and it teaches people to skim the whole list.
+   */
+  if (c.answerable) {
+    body += `<h4>${ico('check', 'sm')}<span class="lbl">Only you can answer this</span></h4>
+       <p style="margin-bottom:12px">launchpad cannot see inside a drawer, a password manager or an
+       inbox, so it will not guess. If this is handled, say so and it stops asking — it is recorded as
+       your answer, and it never counts against you either way.</p>
+       <button class="btn" onclick="answerCheck(${pi},'${id}',true)">
+         ${ico('check', 'sm')}Yes, this is handled</button>`;
+  }
+  if (c.grade !== 'ok' && !c.answerable) {
+    body += cmd
+      ? `<h4>${ico('zap', 'sm')}<span class="lbl">Fix it</span></h4>
+         <p style="margin-bottom:4px">launchpad does this one for you. Run this in Claude Code, inside
+         <code>${esc(p.name)}</code>:</p>
+         <code class="cmd">${esc(cmd)}</code>
+         <button class="btn ghost sm" style="margin-top:10px" onclick="copy('${esc(cmd)}','Command')">
+           ${ico('copy', 'sm')}Copy</button>`
+      : `<h4>${ico('route', 'sm')}<span class="lbl">Queue it</span></h4>
+         <p style="margin-bottom:12px">This is work rather than configuration. Put it on
+         ${esc(p.name)}'s roadmap and either the overnight worker or your next Claude session takes it.</p>
+         <button class="btn" onclick="queueGap(${pi},'${id}')">${ico('plus', 'sm')}Add to the roadmap</button>`;
+  }
+  drawer(p.name + (c.critical && c.grade !== 'ok' ? ' · critical' : ''), c.title, body);
+}
+/** Record — or withdraw — an answer to a question launchpad cannot answer itself. */
+function answerCheck(pi, id, yes) {
+  const p = DATA.projects[pi];
+  act(() => post('/api/confirm', { path: p.path, check: id, confirmed: yes }),
+    yes ? 'Noted — launchpad will stop asking' : 'Back to unanswered');
+  closeDrawer();
+}
+function queueGap(pi, id) {
+  const p = DATA.projects[pi];
+  const c = p.score.checks.find(x => x.id === id);
+  act(() => post('/api/idea', { path: p.path, text: c.title + ' — ' + c.detail }), 'Added to ' + p.name);
+  closeDrawer();
+}
+/** The attended path: a prompt a fresh Claude session can act on directly. */
+function promptFor(pi, id) {
+  const p = DATA.projects[pi], n = p.nightshift;
+  const t = n.queue.find(x => x.id === id) || {};
+  const dir = n.backlogDir || '.launchpad/nightshift/backlog';
+  const text = `Work on task ${id} in this repo.\n\n`
+    + `Read ${dir}/${id}.md for the brief${t.title ? ` — "${t.title}"` : ''}.\n`
+    + `Run \`${n.gate}\` before you finish; it must exit 0, and never edit it to make it pass.\n`
+    + `Change one thing. When it passes, set the task's status to done.`;
+  copy(text, 'Prompt for ' + id);
+}
+function drawer(eyebrow, title, html) {
+  $('#dEyebrow').textContent = eyebrow; $('#dTitle').textContent = title; $('#dBody').innerHTML = html;
+  $('#drawer').classList.add('open'); $('#scrim').classList.add('open');
+}
+function closeDrawer() { $('#drawer').classList.remove('open'); $('#scrim').classList.remove('open'); }
+$('#drawerClose').onclick = closeDrawer;
+$('#scrim').onclick = closeDrawer;
+document.addEventListener('keydown', e => { if (e.key === 'Escape') closeDrawer(); });
+
+/* ── writes ──────────────────────────────────────────────────────────── */
+function sendIdea(pi) {
+  const el = $('#idea-' + pi), text = el.value.trim();
+  if (!text) return;
+  const p = DATA.projects[pi];
+  el.value = '';
+  act(() => post('/api/idea', { path: p.path, text }), 'Captured for ' + p.name);
+}
+function toggleProject(pi) {
+  const p = DATA.projects[pi], next = !p.nightshift.enabled;
+  act(() => post('/api/nightshift/enabled', { path: p.path, enabled: next }),
+      next ? 'Overnight worker on for ' + p.name : 'Overnight worker off for ' + p.name);
+}
+function addProject() {
+  const el = $('#addpath'), path = el.value.trim();
+  if (!path) return;
+  el.value = '';
+  act(() => post('/api/projects/add', { path }), 'Added');
+}
+function removeProject(pi) {
+  const p = DATA.projects[pi];
+  // The registry holds only paths, so this is not destructive — worth saying,
+  // because "remove" next to someone's project reads as though it might be.
+  if (!confirm(`Stop tracking ${p.name}?\n\nThe repository is untouched — this only removes it from the list.`)) return;
+  VIEW.project = null;
+  act(() => post('/api/projects/remove', { path: p.path }), 'Removed from the list');
+}
+function addTask(pi) {
+  const el = $('#newtask-' + pi), title = el.value.trim();
+  if (!title) return;
+  const p = DATA.projects[pi];
+  const priority = Number($('#newprio-' + pi).value);
+  el.value = '';
+  act(() => post('/api/task/create', { path: p.path, title, priority }), 'Queued for ' + p.name);
+}
+function setPrio(pi, id, priority) {
+  const p = DATA.projects[pi];
+  act(() => post('/api/task/priority', { path: p.path, id, priority }), id + ' → P' + priority);
+}
+function setTask(pi, id, status) {
+  const p = DATA.projects[pi];
+  act(() => post('/api/task', { path: p.path, id, status }), id + ' → ' + status);
+}
+
+/* ── render ──────────────────────────────────────────────────────────── */
+function render() {
+  if (VIEW.project && !cur()) { VIEW.project = null; VIEW.tab = 'fleet'; }
+  const key = VIEW.project + '|' + VIEW.tab;
+  ANIM = key !== lastKey;
+  lastKey = key;
+  renderNav(); renderTop();
+  const p = cur();
+  // Consumed by exactly one render. A later re-render from clicking a tab must
+  // not replay a flash for a check that resolved three minutes ago.
+  if (!p) {
+    $('#panes').innerHTML = `<div class="pane-fleet">${paneFleet()}</div>`;
+  } else {
+    const pi = DATA.projects.indexOf(p);
+    const body = {
+      readiness: paneReadiness, deploy: paneDeploy, decisions: paneDecisions,
+      roadmap: paneRoadmap, secrets: paneSecrets, marketing: paneMarketing,
+    }[VIEW.tab] || paneReadiness;
+    $('#panes').innerHTML = `<div class="panel"><div class="panebody">${body(p, pi)}</div>
+      ${PANE_NOTE[VIEW.tab] ? `<div class="panefoot">${ico('help', 'sm')}<span>${PANE_NOTE[VIEW.tab]}</span></div>` : ''}</div>`;
+  }
+  ARRIVED = new Set(); TICK = false;
+}
+
+/**
+ * The closing line on each tab.
+ *
+ * Half of these panels are two cards tall on a small project, which left most
+ * of the viewport black underneath — the "large black region" the audit saw
+ * mid-scroll. A panel with a floor and one sentence saying what the tab is for
+ * ends the page rather than letting it trail off, and none of these sentences
+ * claims anything the product does not already do.
+ */
+const PANE_NOTE = {
+  readiness: 'Every row names what it costs, not just that it is missing. Click one for the '
+    + 'consequence and the command that fixes it — or, where it is genuinely work rather than '
+    + 'configuration, to put it on this project\'s roadmap.',
+  deploy: 'Detected, not declared. Each surface shows the evidence that found it and the exact '
+    + 'config <code>apply</code> will use, so nothing is wired on a guess you cannot see.',
+  decisions: 'Every entry says who decided — <b>launchpad chose</b> or <b>yours, kept</b>. '
+    + 'They are different promises, and a tool that blurs them is either taking credit for your '
+    + 'work or implying it maintains something it has never touched.',
+  roadmap: 'One backlog, two ways to run it: unattended overnight, or attended in a fresh Claude '
+    + 'session. Same tasks, same gate. Nothing runs unless a gate command exists to check it.',
+  secrets: 'Presence only. launchpad reads whether a key is in your OS keychain and never reads '
+    + 'the value — not into this page, not into a log, not into a report.',
+  marketing: 'Deliberately empty rather than half-working. An obviously unfinished section reads '
+    + 'as a roadmap; a half-working one reads as broken.',
+};
+
+/* ── theme ───────────────────────────────────────────────────────────
+   Three states, not two: `auto` follows the OS, and only an explicit choice
+   writes data-theme. Storing "dark" when the OS is already dark would freeze
+   the page against a later OS change the user does expect to be followed. */
+const THEMES = ['auto', 'light', 'dark'];
+function applyTheme(t) {
+  if (t === 'auto') document.documentElement.removeAttribute('data-theme');
+  else document.documentElement.setAttribute('data-theme', t);
+  const osDark = matchMedia('(prefers-color-scheme: dark)').matches;
+  const shown = t === 'auto' ? (osDark ? 'dark' : 'light') : t;
+  $('#themebtn').innerHTML = ico(shown === 'dark' ? 'moon' : 'sun', 'sm')
+    + `<span>${t === 'auto' ? 'auto · ' + shown : t}</span>`;
+}
+let theme = localStorage.getItem('lp-theme') || 'auto';
+$('#themebtn').onclick = () => {
+  theme = THEMES[(THEMES.indexOf(theme) + 1) % THEMES.length];
+  localStorage.setItem('lp-theme', theme);
+  applyTheme(theme);
+};
+matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => applyTheme(theme));
+applyTheme(theme);
+
+/* ── demo mode ────────────────────────────────────────────────────────────
+   Said in three places that survive a crop: a band across the top, the
+   sidebar wordmark, and the browser tab. A screenshot of seven invented apps
+   must not be passable as a screenshot of somebody's real fleet — by us or by
+   anyone who reposts it. */
+if (DEMO) {
+  const bar = $('#demobar');
+  bar.hidden = false;
+  /* The slot that was rendered and never written. It names the temp folder as
+     parent/basename, because the whole path is exactly what must not appear in
+     a screenshot — the terminal prints that. Hidden below 560px, where the band
+     is only the warning and there is no room for anything else. */
+  const root = $('#demoroot');
+  if (root) root.textContent = DEMO_ROOT;
+  document.title = 'Mission Control — DEMO DATA';
+  const sub = $('#brandsub');
+  if (sub) { sub.textContent = 'demo fleet · not real'; sub.style.color = 'var(--warn)'; }
+  /**
+   * `--topbar` follows the band's real height, not a resize event.
+   *
+   * The band is shorter under the ≤700px rules than on the desktop, and
+   * `aside.nav` is positioned against this variable. Binding it to `resize`
+   * meant any viewport change that did not deliver one — a devtools dock, a
+   * headless `setViewportSize`, a media query flipping for another reason —
+   * left the whole sidebar about seven pixels out of place. A ResizeObserver
+   * watches the thing that actually changes; `resize` stays as the fallback for
+   * a browser without one.
+   */
+  const setTop = () => document.documentElement.style.setProperty('--topbar', bar.offsetHeight + 'px');
+  setTop();
+  if (window.ResizeObserver) new ResizeObserver(setTop).observe(bar);
+  else addEventListener('resize', setTop);
+}
+
+load().then(connect).catch(() => connect());
+</script>
+</body>
+</html>

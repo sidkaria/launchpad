@@ -1,0 +1,129 @@
+name: Release {{APP_NAME}} (macOS)
+
+on:
+  push:
+    tags:
+      - '{{TAG_PREFIX}}*'
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-release:
+    runs-on: macos-15
+    steps:
+      # fetch-tags + full depth so the ANNOTATED tag object is present on the runner.
+      # Without it the checkout gets a lightweight ref, `git tag -l --format=%(contents)`
+      # returns nothing, and the release notes your users read silently become the commit
+      # message — "Bump version to 1.2.0", plus any trailers. Release notes are
+      # customer-facing; they have to come from the tag you wrote them in.
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      # Build with the newest stable Xcode the runner has, so apps using the
+      # latest SDK (e.g. macOS 26 "Liquid Glass" APIs) compile. The default
+      # runner Xcode often lags the installed one.
+      - name: Select latest stable Xcode
+        run: |
+          XC=$(ls -d /Applications/Xcode_*.app 2>/dev/null | grep -vi beta | sort -V | tail -1)
+          [ -n "$XC" ] && sudo xcode-select -s "$XC/Contents/Developer" || true
+          xcodebuild -version
+
+      - name: Install Sparkle
+        run: brew install sparkle
+
+      - name: Ensure AWS CLI
+        run: which aws || brew install awscli
+
+      - name: Import Developer ID certificate
+        env:
+          DEVELOPER_ID_CERT_P12: ${{ secrets.DEVELOPER_ID_CERT_P12 }}
+          DEVELOPER_ID_CERT_PASSWORD: ${{ secrets.DEVELOPER_ID_CERT_PASSWORD }}
+          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+        run: |
+          KEYCHAIN_PATH=$RUNNER_TEMP/app-signing.keychain-db
+          security create-keychain -p "$KEYCHAIN_PASSWORD" $KEYCHAIN_PATH
+          security set-keychain-settings -lut 21600 $KEYCHAIN_PATH
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" $KEYCHAIN_PATH
+          echo "$DEVELOPER_ID_CERT_P12" | base64 --decode > certificate.p12
+          CERT_PASS="${DEVELOPER_ID_CERT_PASSWORD// /}"
+          security import certificate.p12 -k $KEYCHAIN_PATH -P "$CERT_PASS" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" $KEYCHAIN_PATH
+          security default-keychain -s $KEYCHAIN_PATH
+          security list-keychain -d user -s $KEYCHAIN_PATH
+          security find-identity -v -p codesigning $KEYCHAIN_PATH
+          rm certificate.p12
+
+      - name: Version from tag
+        id: v
+        run: echo "VERSION=${GITHUB_REF#refs/tags/{{TAG_PREFIX}}}" >> "$GITHUB_OUTPUT"
+
+      - name: Build, sign, notarize DMG
+        env:
+          DEVELOPER_ID_CERT: ${{ secrets.DEVELOPER_ID_CERT }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+          VERSION: ${{ steps.v.outputs.VERSION }}
+        run: |
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" $RUNNER_TEMP/app-signing.keychain-db
+          security list-keychain -d user -s $RUNNER_TEMP/app-signing.keychain-db
+          bash .launchpad/macos/create-dmg.sh
+
+      - name: Generate appcast and publish to R2
+        env:
+          SPARKLE_PRIVATE_KEY: ${{ secrets.SPARKLE_PRIVATE_KEY }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: auto
+          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+          VERSION: ${{ steps.v.outputs.VERSION }}
+        run: |
+          ENDPOINT="https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com"
+          mkdir -p updates
+          mv "{{APP_NAME}}-${VERSION}.dmg" updates/
+          # Pull existing archives so the regenerated appcast keeps full version history.
+          aws s3 sync "s3://{{R2_BUCKET}}" updates/ --endpoint-url "$ENDPOINT" --exclude "appcast.xml" || true
+
+          # Notes are written AFTER that sync, deliberately. The sync pulls the whole bucket
+          # down to rebuild the appcast with full history — including any
+          # {{APP_NAME}}-<version>.html already up there. Generating them first meant the
+          # sync overwrote them with whatever a previous run had uploaded, so a bad set of
+          # notes could never be fixed by re-tagging.
+          NOTES="updates/{{APP_NAME}}-${VERSION}.html"
+          git fetch --force origin "refs/tags/{{TAG_PREFIX}}${VERSION}:refs/tags/{{TAG_PREFIX}}${VERSION}" 2>/dev/null || true
+          # Fail loudly rather than shipping the wrong notes. A lightweight tag produces
+          # plausible-looking release notes made of commit messages, which nobody notices
+          # until a user reads them.
+          if [ "$(git cat-file -t "{{TAG_PREFIX}}${VERSION}" 2>/dev/null)" != "tag" ]; then
+            echo "::error::{{TAG_PREFIX}}${VERSION} is not an annotated tag on the runner — release" \
+                 "notes would fall back to the commit message. Re-tag with 'git tag -a'."
+            exit 1
+          fi
+          {
+            echo "<h2>{{APP_NAME}} ${VERSION}</h2>"
+            echo "<ul>"
+            # Trailers are for the repo, not for your users.
+            git tag -l --format='%(contents)' "{{TAG_PREFIX}}${VERSION}" \
+              | grep -vE '^(Co-Authored-By|Signed-off-by|Co-authored-by):' \
+              | while IFS= read -r line; do
+                  if [ -n "$line" ]; then echo "<li>${line}</li>"; fi
+                done
+            echo "</ul>"
+          } > "$NOTES"
+          echo "$SPARKLE_PRIVATE_KEY" > sparkle_key.pem
+          GENERATE_APPCAST=$(brew list sparkle | grep 'bin/generate_appcast$' | head -1)
+          "$GENERATE_APPCAST" updates/ --ed-key-file sparkle_key.pem --download-url-prefix "https://{{APPCAST_DOMAIN}}/"
+          rm sparkle_key.pem
+          aws s3 sync updates/ "s3://{{R2_BUCKET}}" --endpoint-url "$ENDPOINT"
+          echo "Appcast live: https://{{APPCAST_DOMAIN}}/appcast.xml"
+
+      - name: GitHub Release (backup copy)
+        uses: softprops/action-gh-release@v1
+        with:
+          files: updates/{{APP_NAME}}-${{ steps.v.outputs.VERSION }}.dmg
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -1,0 +1,64 @@
+name: Distribute {{APP_NAME}} (Android)
+
+on:
+{{ON_TRIGGERS}}
+
+permissions:
+  contents: read
+
+jobs:
+  android:
+    runs-on: {{RUNS_ON}}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+{{SCHEDULE_GUARD}}      - uses: actions/setup-java@v4
+{{STEP_IF}}        with:
+          distribution: temurin
+          java-version: '17'
+
+      # The runner's SYSTEM gem dir (/var/lib/gems/...) is root-owned, so a bare
+      # `gem install fastlane` dies with "You don't have write permissions".
+      # setup-ruby installs a user-owned ruby whose gem dir is writable, so it
+      # MUST come before any gem/fastlane invocation below.
+      - uses: ruby/setup-ruby@v1
+{{STEP_IF}}        with:
+          ruby-version: '3.3'
+          bundler-cache: false
+{{FLUTTER_SETUP}}
+{{CODEGEN_STEP}}      - name: Install fastlane + Firebase plugin
+{{STEP_IF}}        run: |
+          gem install fastlane -N
+          # NOT `fastlane add_plugin` — it prompts ("Should fastlane modify the
+          # Gemfile?") and dies in CI with FastlaneCrash: "Could not retrieve
+          # response as fastlane runs in non-interactive mode". Installing the
+          # gem directly is deterministic; fastlane loads it via the generated
+          # fastlane/Pluginfile.
+          gem install fastlane-plugin-firebase_app_distribution -N
+          # bundler is how fastlane discovers the Pluginfile (see the Gemfile).
+          (cd {{WORKDIR}}/android && bundle install --quiet)
+
+      - name: Materialize signing keystore + Firebase credentials
+{{STEP_IF}}        working-directory: {{WORKDIR}}
+        env:
+          KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+          FIREBASE_SA: ${{ secrets.FIREBASE_SA_JSON }}
+        run: |
+          echo "$KEYSTORE_BASE64" | base64 --decode > android/app/upload-keystore.jks
+          cat > android/key.properties <<EOF
+          storeFile=upload-keystore.jks
+          storePassword=$KEYSTORE_PASSWORD
+          keyAlias=$KEY_ALIAS
+          keyPassword=$KEY_PASSWORD
+          EOF
+          printf '%s' "$FIREBASE_SA" > "$RUNNER_TEMP/firebase-sa.json"
+
+      - name: Build + distribute
+{{STEP_IF}}        working-directory: {{WORKDIR}}/android
+        env:
+          FIREBASE_SA_PATH: ${{ runner.temp }}/firebase-sa.json{{DART_DEFINE_ENV}}
+        run: bundle exec fastlane beta

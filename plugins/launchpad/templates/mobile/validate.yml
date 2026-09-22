@@ -1,0 +1,29 @@
+name: Validate {{APP_NAME}} (mobile)
+
+on:
+{{ON_TRIGGERS}}
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    # ubuntu, deliberately: `flutter analyze` and `flutter test` never need macOS,
+    # and a macOS runner bills ~10x an ubuntu one. Only the signing/archive work
+    # in the distribution workflow requires a Mac.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+{{FLUTTER_SETUP}}
+
+      - name: flutter pub get
+        working-directory: {{WORKDIR}}
+        run: flutter pub get
+
+{{CODEGEN_STEP}}      - name: flutter analyze
+        working-directory: {{WORKDIR}}
+        run: flutter analyze
+
+      - name: flutter test
+        working-directory: {{WORKDIR}}
+        run: flutter test{{TEST_ARGS}}

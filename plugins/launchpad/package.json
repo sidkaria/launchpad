@@ -1,0 +1,25 @@
+{
+  "name": "launchpad-cli",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "launchpad": "dist/cli/index.js",
+    "launchpad-nightshift": "dist/nightshift/cli.js"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json && node scripts/copy-assets.mjs",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "publish": "npm run build && node ../../scripts/publish.mjs && node ../../scripts/verify-package.mjs",
+    "verify": "node ../../scripts/verify-package.mjs"
+  },
+  "dependencies": {
+    "yaml": "^2.5.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.7.0",
+    "typescript": "^5.6.3",
+    "vitest": "^2.1.3"
+  }
+}

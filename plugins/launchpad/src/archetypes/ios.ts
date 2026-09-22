@@ -1,0 +1,517 @@
+import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
+import { join, dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { render } from '../templating.js';
+import { dartDefineArgs, dartDefineEnv } from './flavors.js';
+import {
+  renderOnBlock, scheduleGuardStep, stepIfLine, stepIfVar,
+  IOS_DEFAULT_DISTRIBUTE_ON, IOS_DEFAULT_RUNNER, flutterSetupStep, type DistributeTrigger,
+} from './triggers.js';
+import { codegenWorkflowStep } from './mobilevalidate.js';
+import { writeGuarded, type WriteResult } from '../generated.js';
+
+export interface IosConfig {
+  appName: string;
+  // 'react-native' and 'expo' are DETECTED but not yet wireable — see
+  // UNSUPPORTED_FRAMEWORKS. They are in the union so a detected surface can
+  // record what it actually is rather than being mislabelled 'native'.
+  framework: 'flutter' | 'native' | 'react-native' | 'expo';
+  bundleId: string;
+  scheme: string;        // native: xcodebuild scheme; flutter: '' (uses Runner)
+  workdir: string;       // dir to run fastlane/flutter from, repo-relative ('.' for root)
+  teamId: string;        // the 10-character Apple Developer team id
+  testBranch: string;    // push to this branch → TestFlight (e.g. 'main')
+  tagPrefix: string;     // tag → App Store upload (e.g. 'v')
+  // Default 'cloud' — Xcode automatic signing via the App Store Connect API key
+  // (-allowProvisioningUpdates); no certs repo, so a native app ships to CI with
+  // only the ASC key. Opt into 'match' (a shared Apple Distribution cert in a
+  // private certs repo, reused across apps) for deterministic certs or manual
+  // signing. Flutter always resolves to 'match' (its export pipeline references
+  // a named match profile). See signingMode().
+  signing?: 'cloud' | 'match';
+  matchGitUrl?: string;  // shared certs repo — required in match mode only
+  // How CI reads the certs repo, in match mode only. Default 'deploy-key': a
+  // read-only SSH deploy key scoped to that one repo (MATCH_DEPLOY_KEY), which
+  // is both least-privilege and the only thing that works on a launchd-managed
+  // self-hosted runner — such a service cannot read the user's login keychain
+  // (`failed to get: -25308`, errSecInteractionNotAllowed), so keychain-backed
+  // HTTPS git auth fails outright with "Error cloning certificates repo".
+  // 'basic' keeps the legacy MATCH_GIT_BASIC_AUTHORIZATION (a broad PAT) path.
+  certsAuth?: 'deploy-key' | 'basic';
+  prebuild?: string;     // native: command to regenerate a gitignored xcodeproj, e.g. 'xcodegen generate' (mirrors macOS)
+  appSourceDir?: string; // native: target's source/asset dir (e.g. 'apps/Receiver') — for the dev-build variant
+  // flutter: flavour to build (e.g. 'prod'), resolving to the Xcode scheme and
+  // Debug/Profile/Release-<flavor> configs wireFlutterFlavors injects. Unset →
+  // the base, no-flavour build, unchanged. Ignored for native.
+  flavor?: string;
+  // flutter: dart define name → CI env var holding its value (see dartDefineArgs).
+  dartDefines?: Record<string, string>;
+
+  // ── CI trigger policy (see archetypes/triggers.ts). All optional; leaving every
+  // field unset reproduces the original hardcoded workflow byte-for-byte.
+  runsOn?: string;                     // runner label; default 'macos-15'
+  distributeOn?: DistributeTrigger[];  // default ['push','tag','dispatch']
+  schedule?: string;                   // cron (UTC), required when distributeOn has 'schedule'
+  pathFilter?: string[];               // repo-relative globs; adds `paths:` to the push trigger
+  validate?: boolean;                  // flutter: also emit the cheap analyze/test workflow
+  // Command regenerating the app's generated dart sources. Runs in BOTH the
+  // validate workflow (before `flutter analyze`) and this distribution workflow
+  // (before the build) — a repo that gitignores generated dart cannot compile
+  // without it, so validate-only was a real CI failure. `prebuild` is the
+  // separate native-Xcode hook.
+  codegen?: string;
+  // Pin the CI Flutter version. Unset => `channel: stable`, which floats and
+  // makes CI non-reproducible against a pinned dev machine.
+  flutterVersion?: string;
+  // validate-only: extra `flutter test` args (see MobileValidateConfig.testArgs).
+  testArgs?: string;
+}
+
+/** The surface's trigger policy, with the pre-policy defaults filled in. */
+export function iosTriggerPolicy(c: IosConfig) {
+  return {
+    testBranch: c.testBranch,
+    tagPrefix: c.tagPrefix,
+    distributeOn: c.distributeOn ?? IOS_DEFAULT_DISTRIBUTE_ON,
+    schedule: c.schedule,
+    pathFilter: c.pathFilter,
+  };
+}
+
+export interface GeneratedFile { path: string; contents: string; }
+
+// The App Store Connect API key — the only secrets a cloud-signed iOS surface
+// needs (upload + cloud signing). Every iOS surface needs these three.
+/**
+ * Frameworks detection recognises but `apply` cannot yet build.
+ *
+ * Emitting a 'native' pipeline for these would be worse than refusing: bare
+ * React Native needs a CocoaPods install and a JS bundle step, and Expo needs
+ * `expo prebuild` to even produce an ios/ directory. The generated workflow
+ * would look correct, run, and fail — after paying for the build.
+ */
+export const UNSUPPORTED_FRAMEWORKS = ['react-native', 'expo'] as const;
+
+export function isWireable(framework: string): boolean {
+  return !(UNSUPPORTED_FRAMEWORKS as readonly string[]).includes(framework);
+}
+
+export const IOS_CLOUD_SECRETS = ['ASC_KEY_P8', 'ASC_KEY_ID', 'ASC_ISSUER_ID'];
+// Extra secrets a match-signed surface needs on top of the ASC key, on the
+// default 'deploy-key' certs auth. MATCH_KEYCHAIN_PASSWORD guards the dedicated
+// CI keychain match imports the .p12 into (see keychainStep) — required in both
+// certsAuth modes, since it is a keychain concern, not a git-auth one.
+export const IOS_MATCH_SECRETS = ['MATCH_PASSWORD', 'MATCH_KEYCHAIN_PASSWORD', 'MATCH_DEPLOY_KEY'];
+// The same set for a surface that opted back into `certsAuth: 'basic'`.
+export const IOS_MATCH_BASIC_SECRETS = [
+  'MATCH_PASSWORD', 'MATCH_KEYCHAIN_PASSWORD', 'MATCH_GIT_BASIC_AUTHORIZATION',
+];
+// Full set (back-compat): a match-based setup on the defaults needs all six.
+export const IOS_GLOBAL_SECRETS = [...IOS_CLOUD_SECRETS, ...IOS_MATCH_SECRETS];
+
+/**
+ * Resolve the signing mode. The default is `cloud` — Xcode automatic signing
+ * driven by the App Store Connect API key (-allowProvisioningUpdates), so a
+ * native app ships through CI with only the ASC key (which every iOS app needs
+ * anyway): no certs repo, no per-app match step. A native target can opt into
+ * `match` (a shared Apple Distribution cert in a private certs repo) for
+ * deterministic certs. Flutter always uses match: `flutter build ipa` exports
+ * through a named provisioning profile baked into ios/ExportOptions.plist,
+ * which match creates.
+ */
+export function signingMode(c: IosConfig): 'cloud' | 'match' {
+  if (c.framework === 'flutter') return 'match';
+  return c.signing ?? 'cloud';
+}
+
+/** How CI authenticates to the certs repo. Only meaningful in match mode. */
+export function certsAuthMode(c: IosConfig): 'deploy-key' | 'basic' {
+  return c.certsAuth ?? 'deploy-key';
+}
+
+/** The repo secrets this surface requires, given its signing mode. */
+export function iosSecrets(c: IosConfig): string[] {
+  if (signingMode(c) !== 'match') return [...IOS_CLOUD_SECRETS];
+  return certsAuthMode(c) === 'basic'
+    ? [...IOS_CLOUD_SECRETS, ...IOS_MATCH_BASIC_SECRETS]
+    : [...IOS_GLOBAL_SECRETS];
+}
+
+/**
+ * The certs repo in scp-style SSH form, which is what a read-only deploy key
+ * requires: `https://github.com/owner/repo.git` → `git@github.com:owner/repo.git`.
+ *
+ * Already-SSH input (scp-style or an explicit `ssh://` URL) passes through
+ * untouched, so the conversion is idempotent. A missing `.git` and a trailing
+ * slash are normalised. Anything that is not an http(s) URL is returned as-is
+ * rather than mangled — a local path certs repo stays a local path.
+ */
+export function matchGitSshUrl(httpsUrl: string): string {
+  const u = httpsUrl.trim();
+  if (/^ssh:\/\//i.test(u) || /^[^/\s]+@[^/\s]+:/.test(u)) return u;
+  const m = /^https?:\/\/(?:[^@/]*@)?([^/]+)\/(.+)$/i.exec(u);
+  if (!m) return u;
+  const path = m[2].replace(/\/+$/, '');
+  return `git@${m[1]}:${path.endsWith('.git') ? path : `${path}.git`}`;
+}
+
+/** The certs repo's git host — what `ssh-keyscan` must pin. */
+function matchGitHost(url: string): string {
+  const ssh = matchGitSshUrl(url);
+  return /^[^/\s]+@([^/\s:]+):/.exec(ssh)?.[1]
+    ?? /^ssh:\/\/(?:[^@/]*@)?([^/:]+)/i.exec(ssh)?.[1]
+    ?? 'github.com';
+}
+
+/**
+ * Workflow filename stem — mirrors the macOS convention (scheme-based, space
+ * free) so `launchpad-<Scheme>-ios.yml` sits alongside `launchpad-<Scheme>-macos.yml`.
+ * Flutter has no scheme, so fall back to the app name; slugify either way so an
+ * app name with spaces (e.g. "My App Receiver") never yields a bad path.
+ */
+export function iosWorkflowSlug(c: IosConfig): string {
+  const base = c.scheme && c.scheme.trim() ? c.scheme : c.appName;
+  return base.replace(/[^A-Za-z0-9._-]+/g, '-').replace(/^-+|-+$/g, '');
+}
+
+export function iosWorkflowPath(c: IosConfig): string {
+  return `.github/workflows/launchpad-${iosWorkflowSlug(c)}-ios.yml`;
+}
+
+const TEMPLATES_DIR = join(dirname(fileURLToPath(import.meta.url)), '..', '..', 'templates', 'ios');
+const tmpl = (n: string) => readFileSync(join(TEMPLATES_DIR, n), 'utf8');
+const underWorkdir = (workdir: string, rel: string) => (workdir === '.' ? rel : `${workdir}/${rel}`);
+
+// Fastlane helper that feeds the ASC API key to xcodebuild so -allowProvisioningUpdates
+// can create/download the distribution cert + profile in the cloud (Xcode 13+).
+function cloudHelper(): string {
+  return [
+    'def cloud_signing_xcargs',
+    '  [',
+    '    "-allowProvisioningUpdates",',
+    '    "-authenticationKeyPath", ENV.fetch("ASC_KEY_PATH"),',
+    '    "-authenticationKeyID", ENV.fetch("ASC_KEY_ID"),',
+    '    "-authenticationKeyIssuerID", ENV.fetch("ASC_ISSUER_ID"),',
+    '  ].join(" ")',
+    'end',
+  ].join('\n');
+}
+
+// Flutter's `sh("flutter build ipa")` doesn't record the IPA path in fastlane's
+// lane context, so the upload lanes glob for it. (Native uses build_app, which
+// sets SharedValues::IPA_OUTPUT_PATH — see ipaArg.)
+function newestIpaHelper(c: IosConfig): string {
+  const g = ipaGlob(c);
+  return [
+    'def newest_ipa',
+    `  Dir.glob(File.expand_path("../${g}", __dir__)).max_by { |f| File.mtime(f) } \\`,
+    `    || UI.user_error!("no .ipa found under ${g}")`,
+    'end',
+  ].join('\n');
+}
+
+// Top-of-file helper defs, only those the chosen framework/signing mode uses.
+function helpers(c: IosConfig): string {
+  const defs: string[] = [];
+  if (c.framework === 'flutter') defs.push(newestIpaHelper(c));
+  if (signingMode(c) === 'cloud') defs.push(cloudHelper());
+  return defs.length ? '\n' + defs.join('\n\n') + '\n' : '';
+}
+
+// The upload lanes' `ipa:` argument. Native omits it so upload_to_* reads
+// build_app's SharedValues::IPA_OUTPUT_PATH (the exact archive gym produced),
+// rather than a fragile pwd-relative glob. Flutter passes the globbed path.
+function ipaArg(c: IosConfig): string {
+  return c.framework === 'flutter' ? '      ipa: newest_ipa,\n' : '';
+}
+
+function signingLaneBody(c: IosConfig): string {
+  if (signingMode(c) === 'match') {
+    return [
+      `    match(type: "appstore", app_identifier: "${c.bundleId}", readonly: true, api_key: asc_key)`,
+      '',
+      '    # A freshly-imported private key has no partition list, so codesign cannot',
+      '    # use it without a UI prompt — in a headless/service session that surfaces as',
+      '    # `errSecInternalComponent` ("Failed to codesign … Flutter.framework"). Grant',
+      '    # apple-tool/apple/codesign access explicitly. No-op when there is no',
+      '    # dedicated keychain (MATCH_KEYCHAIN_NAME unset).',
+      '    if ENV["MATCH_KEYCHAIN_NAME"].to_s != ""',
+      '      sh(\'security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$MATCH_KEYCHAIN_PASSWORD" "$MATCH_KEYCHAIN_NAME" >/dev/null 2>&1 || true\')',
+      '    end',
+    ].join('\n');
+  }
+  return [
+    '    # Cloud signing — Xcode manages the distribution cert + provisioning',
+    '    # profile via the App Store Connect API key (-allowProvisioningUpdates).',
+    '    # No shared certs repo (match) required.',
+    '    UI.message("Using Xcode automatic (cloud) signing via App Store Connect API key")',
+  ].join('\n');
+}
+
+/**
+ * Point the Xcode project at the match-provisioned Distribution identity for the
+ * configuration we archive.
+ *
+ * A stock Flutter project ships `CODE_SIGN_STYLE = Automatic` and
+ * `CODE_SIGN_IDENTITY[sdk=iphoneos*] = "iPhone Developer"`, so Xcode ignores
+ * match and picks an **Apple Development** cert out of the LOGIN keychain. On a
+ * launchd-service runner that keychain is unreachable and the archive dies with
+ * `errSecInternalComponent` while codesigning Flutter.framework — even though
+ * match imported a perfectly good Apple Distribution cert into its own keychain.
+ */
+function codeSigningSettings(c: IosConfig): string {
+  if (signingMode(c) !== 'match' || c.framework !== 'flutter') return '';
+  const releaseConfig = c.flavor ? `Release-${c.flavor}` : 'Release';
+  return [
+    '    update_code_signing_settings(',
+    '      use_automatic_signing: false,',
+    "      path: File.expand_path('../ios/Runner.xcodeproj', __dir__),",
+    `      team_id: "${c.teamId}",`,
+    '      code_sign_identity: "Apple Distribution",',
+    `      profile_name: ENV.fetch("sigh_${c.bundleId}_appstore_profile-name", nil),`,
+    '      targets: ["Runner"],',
+    `      build_configurations: ["${releaseConfig}"]`,
+    '    )',
+    '',
+  ].join('\n');
+}
+
+function buildStep(c: IosConfig): string {
+  if (c.framework === 'flutter') {
+    // fastlane runs under its own ruby and exports GEM_HOME/GEM_PATH/RUBYOPT/etc.
+    // into children. `flutter build ipa` shells out to `pod`, which then resolves
+    // against fastlane's ruby instead of its own and dies with "CocoaPods is
+    // installed but broken … the version of Ruby that CocoaPods was installed with
+    // is different from the one being used to invoke it". Stripping the ruby vars
+    // for THIS child only (fastlane itself is unaffected) lets pod use its own.
+    const args = ['env -u GEM_HOME -u GEM_PATH -u RUBYOPT -u RUBYLIB -u BUNDLE_GEMFILE -u BUNDLE_BIN_PATH -u BUNDLE_PATH LANG=en_US.UTF-8 LC_ALL=en_US.UTF-8 flutter build ipa --release'];
+    if (c.flavor) args.push(`--flavor ${c.flavor}`);
+    args.push(
+      '--build-number=#{build_number}',
+      // ABSOLUTE, anchored at the Fastfile's own directory. A real run failed with
+      // `"ios/ExportOptions.plist" property list does not exist` even though the file
+      // was present: `flutter build ipa` resolves this path from a different cwd than
+      // fastlane's `sh` runs in, so a relative path is ambiguous.
+      `--export-options-plist #{File.expand_path('../ios/ExportOptions.plist', __dir__)}`,
+      ...dartDefineArgs(c.dartDefines),
+    );
+    return [
+      'build_number = `git rev-list --count HEAD`.strip',
+      codeSigningSettings(c).replace(/^/gm, '').trimEnd(),
+      `    sh("${args.join(' ')}")`,
+    ].filter(Boolean).join('\n');
+  }
+  if (signingMode(c) === 'cloud') {
+    // Only `xcargs` — gym applies it to both the archive and the export step, so
+    // passing export_xcargs too would land -authenticationKeyPath on
+    // `xcodebuild -exportArchive` twice ("may only be provided once").
+    return [
+      'build_app(',
+      `      scheme: "${c.scheme}",`,
+      '      export_method: "app-store",',
+      `      output_name: "${c.appName}.ipa",`,
+      '      output_directory: "build",',
+      '      xcargs: cloud_signing_xcargs,',
+      `      export_options: { signingStyle: "automatic", teamID: "${c.teamId}" }`,
+      '    )',
+    ].join('\n');
+  }
+  // native + match: manual signing via the match-provisioned profile (same
+  // "match AppStore <bundle>" profile the Flutter ExportOptions.plist uses).
+  return [
+    'build_app(',
+    `      scheme: "${c.scheme}",`,
+    '      export_method: "app-store",',
+    `      output_name: "${c.appName}.ipa",`,
+    '      output_directory: "build",',
+    `      export_options: { signingStyle: "manual", provisioningProfiles: { "${c.bundleId}" => "match AppStore ${c.bundleId}" } }`,
+    '    )',
+  ].join('\n');
+}
+
+function ipaGlob(c: IosConfig): string {
+  return c.framework === 'flutter' ? 'build/ios/ipa/*.ipa' : 'build/*.ipa';
+}
+
+// `stepIf` is the schedule guard's gating line (empty unless the workflow runs
+// on a schedule) — it must land inside the step, not before it.
+
+// Regenerate a gitignored xcodeproj (e.g. `xcodegen generate`) on the runner
+// before the build, in the same workdir gym builds from. Empty → no step.
+// macos runners don't ship xcodegen, so a prebuild that uses it gets a
+// self-installing guard prepended (unless the command already installs it).
+function prebuildStep(c: IosConfig, stepIf: string): string {
+  const cmd = c.prebuild?.trim();
+  if (!cmd) return '';
+  const needsXcodegen = /\bxcodegen\b/.test(cmd) && !/brew install xcodegen/.test(cmd);
+  const runLines = needsXcodegen
+    ? ['which xcodegen >/dev/null 2>&1 || brew install xcodegen', cmd]
+    : [cmd];
+  const run = runLines.length === 1
+    ? `        run: ${runLines[0]}`
+    : ['        run: |', ...runLines.map(l => `          ${l}`)].join('\n');
+  return [
+    '      - name: Generate Xcode project',
+    ...(stepIf ? [stepIf] : []),
+    `        working-directory: ${c.workdir}`,
+    run,
+  ].join('\n');
+}
+
+// The dedicated CI keychain (path + the shell var both the create and delete
+// steps derive it from). Mirrors the macOS Developer-ID pipeline, which already
+// signs out of a throwaway $RUNNER_TEMP keychain.
+const KEYCHAIN_PATH_EXPR = 'KC="$RUNNER_TEMP/launchpad-signing.keychain-db"';
+const SSH_KEY_PATH = '$RUNNER_TEMP/.ssh/match_key';
+const SSH_KNOWN_HOSTS = '$RUNNER_TEMP/.ssh/known_hosts';
+
+/**
+ * Create + unlock a throwaway keychain and put it at the head of the user search
+ * list, so `match` imports the signing .p12 there instead of the login keychain.
+ * A launchd-managed self-hosted runner cannot touch the login keychain at all
+ * (`failed to get: -25308` — errSecInteractionNotAllowed), so this is what makes
+ * match work off a GitHub-hosted runner.
+ */
+function keychainStep(stepIf: string): string {
+  return [
+    '      # A launchd-managed self-hosted runner cannot read the login keychain',
+    '      # (-25308 errSecInteractionNotAllowed), and match imports there by default.',
+    '      # Sign out of a throwaway keychain instead — same approach as the macOS lane.',
+    '      - name: Create signing keychain',
+    ...(stepIf ? [stepIf] : []),
+    '        env:',
+    '          KEYCHAIN_PASSWORD: ${{ secrets.MATCH_KEYCHAIN_PASSWORD }}',
+    '        run: |',
+    `          ${KEYCHAIN_PATH_EXPR}`,
+    '          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KC"',
+    '          security set-keychain-settings -lut 21600 "$KC"',
+    '          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KC"',
+    `          security list-keychains -d user -s "$KC" $(security list-keychains -d user | tr -d '"')`,
+    '          echo "MATCH_KEYCHAIN_NAME=$KC" >> "$GITHUB_ENV"',
+  ].join('\n');
+}
+
+/**
+ * Delete the keychain however the job ended, so a long-lived self-hosted runner
+ * does not accumulate one per build. `if: always()` is deliberately the ONLY
+ * gate: a step cannot carry both it and the schedule guard's condition, and
+ * cleanup must still run when the guard skipped the build.
+ */
+function keychainCleanupStep(): string {
+  return [
+    '      - name: Delete signing keychain',
+    '        if: always()',
+    '        run: |',
+    `          ${KEYCHAIN_PATH_EXPR}`,
+    '          security delete-keychain "$KC" || true',
+  ].join('\n');
+}
+
+/**
+ * Install the read-only deploy key for the certs repo. Replaces
+ * MATCH_GIT_BASIC_AUTHORIZATION (a broad PAT, resolved through the keychain-backed
+ * git credential helper — unavailable to a launchd service) with an SSH key
+ * scoped to that one repository.
+ */
+function certsDeployKeyStep(c: IosConfig, stepIf: string): string {
+  return [
+    '      # A deploy key is scoped to the certs repo alone, and unlike the keychain-',
+    '      # backed HTTPS credential it is readable by a launchd-managed runner.',
+    '      - name: Authorize certs repo (read-only deploy key)',
+    ...(stepIf ? [stepIf] : []),
+    '        env:',
+    '          MATCH_DEPLOY_KEY: ${{ secrets.MATCH_DEPLOY_KEY }}',
+    '        run: |',
+    '          mkdir -p "$RUNNER_TEMP/.ssh"',
+    `          printf '%s\\n' "$MATCH_DEPLOY_KEY" > "${SSH_KEY_PATH}"`,
+    `          chmod 600 "${SSH_KEY_PATH}"`,
+    `          ssh-keyscan -t ed25519,rsa ${matchGitHost(c.matchGitUrl ?? '')} > "${SSH_KNOWN_HOSTS}" 2>/dev/null`,
+  ].join('\n');
+}
+
+/**
+ * The match-only steps that run before the build. Substituted at the start of
+ * the line holding the build step, so the cloud case renders to nothing at all
+ * and the workflow stays byte-for-byte what it was.
+ */
+function signingSetupSteps(c: IosConfig, stepIf: string): string {
+  if (signingMode(c) !== 'match') return '';
+  const steps = [keychainStep(stepIf)];
+  if (certsAuthMode(c) === 'deploy-key') steps.push(certsDeployKeyStep(c, stepIf));
+  return steps.join('\n\n') + '\n\n';
+}
+
+/** The trailing cleanup step; leads with a blank line, empty in cloud mode. */
+function signingCleanupStep(c: IosConfig): string {
+  return signingMode(c) === 'match' ? '\n\n' + keychainCleanupStep() : '';
+}
+
+// The match-only env block for the workflow's build step; empty in cloud mode.
+// Leads with a newline so the cloud case collapses cleanly (no blank YAML line).
+// MATCH_KEYCHAIN_NAME/MATCH_KEYCHAIN_PASSWORD and GIT_SSH_COMMAND are read by
+// match and git themselves — they are deliberately NOT fastlane action params.
+function matchEnv(c: IosConfig): string {
+  if (signingMode(c) !== 'match') return '';
+  const deployKey = certsAuthMode(c) === 'deploy-key';
+  const url = deployKey ? matchGitSshUrl(c.matchGitUrl ?? '') : c.matchGitUrl;
+  return '\n' + [
+    '          MATCH_PASSWORD: ${{ secrets.MATCH_PASSWORD }}',
+    `          MATCH_GIT_URL: ${url}`,
+    ...(deployKey
+      ? [
+        `          GIT_SSH_COMMAND: ssh -i ${SSH_KEY_PATH} -o IdentitiesOnly=yes -o UserKnownHostsFile=${SSH_KNOWN_HOSTS}`,
+      ]
+      : ['          MATCH_GIT_BASIC_AUTHORIZATION: ${{ secrets.MATCH_GIT_BASIC_AUTHORIZATION }}']),
+    '          MATCH_KEYCHAIN_NAME: ${{ env.MATCH_KEYCHAIN_NAME }}',
+    '          MATCH_KEYCHAIN_PASSWORD: ${{ secrets.MATCH_KEYCHAIN_PASSWORD }}',
+  ].join('\n');
+}
+
+export function planIosFiles(c: IosConfig): GeneratedFile[] {
+  if (signingMode(c) === 'match' && !c.matchGitUrl) {
+    throw new Error('planIosFiles: match signing requires matchGitUrl (the shared certs repo)');
+  }
+  const fastfileVars = {
+    HELPERS: helpers(c),
+    SIGNING_LANE_BODY: signingLaneBody(c),
+    BUILD_STEP: buildStep(c),
+    IPA_ARG: ipaArg(c),
+  };
+  const policy = iosTriggerPolicy(c);
+  const stepIf = stepIfLine(policy.distributeOn);
+  const wfVars = {
+    APP_NAME: c.appName, WORKDIR: c.workdir,
+    RUNS_ON: c.runsOn ?? IOS_DEFAULT_RUNNER,
+    ON_TRIGGERS: renderOnBlock(policy),
+    SCHEDULE_GUARD: scheduleGuardStep(policy, c.workdir),
+    STEP_IF: stepIfVar(policy.distributeOn),
+    FLUTTER_SETUP: c.framework === 'flutter' ? flutterSetupStep(c.flutterVersion, stepIf) : '', PREBUILD_STEP: prebuildStep(c, stepIf),
+    SIGNING_SETUP_STEPS: signingSetupSteps(c, stepIf),
+    SIGNING_CLEANUP_STEP: signingCleanupStep(c),
+    MATCH_ENV: matchEnv(c),
+    // Flutter-only: native builds via build_app have no --dart-define, so they
+    // must not carry the env lines either (mirrors buildStep ignoring them).
+    CODEGEN_STEP: codegenWorkflowStep(c.codegen, c.workdir, stepIfLine(policy.distributeOn)),
+    DART_DEFINE_ENV: c.framework === 'flutter' ? dartDefineEnv(c.dartDefines) : '',
+  };
+  const files: GeneratedFile[] = [
+    { path: underWorkdir(c.workdir, 'fastlane/Fastfile'), contents: render(tmpl('Fastfile'), fastfileVars) },
+    { path: iosWorkflowPath(c), contents: render(tmpl('release.yml'), wfVars) },
+  ];
+  if (c.framework === 'flutter') {
+    files.push({
+      path: underWorkdir(c.workdir, 'ios/ExportOptions.plist'),
+      contents: render(tmpl('ExportOptions.plist'), { TEAM_ID: c.teamId, BUNDLE_ID: c.bundleId }),
+    });
+  }
+  return files;
+}
+
+/**
+ * Write the iOS pipeline files. An existing non-launchpad `fastlane/Fastfile`
+ * (an adopted lane a local deploy script may already call) is PRESERVED, never
+ * overwritten — see `writeGuarded`.
+ */
+export function writeIosFiles(repo: string, c: IosConfig): WriteResult {
+  return writeGuarded(repo, planIosFiles(c));
+}

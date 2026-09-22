@@ -1,0 +1,770 @@
+import { createHash } from 'node:crypto';
+import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs';
+import { join, dirname } from 'node:path';
+import { parse, stringify } from 'yaml';
+import type { Surface } from '../types.js';
+import type { IosConfig } from './ios.js';
+import type { AndroidConfig } from './android.js';
+
+/**
+ * Flutter dev/prod flavour injectors.
+ *
+ * Every function here is a pure, idempotent text transform: given the current
+ * contents of a native project file it returns the flavoured contents, or the
+ * input unchanged when the flavours are already wired (or the file has a shape
+ * we don't recognise). Re-running `apply` must produce a zero diff.
+ *
+ * Invariant across the whole module: **prod is the current identity**. The prod
+ * flavour never adds a suffix or renames anything, and on iOS the base
+ * Debug/Profile/Release configs and the RunnerTests target are left in place so
+ * a no-flavour `flutter build ipa --release` keeps working byte-for-byte.
+ */
+
+// ─────────────────────────────────────────────────────────── Android (Kotlin DSL)
+
+/**
+ * Insert an `env` flavour dimension with `prod`/`dev` product flavours into an
+ * `android/app/build.gradle.kts`. Kotlin-DSL syntax (`create("x")`, `+=`, `=`),
+ * inserted after `defaultConfig { }` inside the existing `android { }` block.
+ *
+ * `prodLabel` should be the app's *current* manifest label so prod keeps its
+ * identity; it defaults to `appName`. `devLabel` defaults to "<appName> Dev".
+ */
+export function injectAndroidFlavors(
+  kts: string,
+  c: { appName: string; devLabel?: string; prodLabel?: string },
+): string {
+  if (/\bflavorDimensions\b/.test(kts) || /\bproductFlavors\b/.test(kts)) return kts;
+
+  const androidM = /(^|\n)([ \t]*)android\s*\{/.exec(kts);
+  if (!androidM) return kts;
+  const androidOpen = kts.indexOf('{', androidM.index + androidM[1].length);
+  const androidClose = matchBrace(kts, androidOpen, ktSkip);
+
+  let insertAt: number;
+  let indent: string;
+  const dcRe = /\n([ \t]*)defaultConfig\s*\{/g;
+  dcRe.lastIndex = androidOpen;
+  const dcM = dcRe.exec(kts);
+  if (dcM && dcM.index < androidClose) {
+    indent = dcM[1];
+    insertAt = matchBrace(kts, kts.indexOf('{', dcM.index), ktSkip) + 1;
+  } else {
+    // No defaultConfig — fall back to just before the `android { }` closing brace.
+    indent = `${androidM[2]}    `;
+    insertAt = kts.lastIndexOf('\n', androidClose);
+  }
+
+  const devLabel = c.devLabel ?? `${c.appName} Dev`;
+  const prodLabel = c.prodLabel ?? c.appName;
+  const i1 = indent;
+  const i2 = indent.repeat(2);
+  const i3 = indent.repeat(3);
+  const block = [
+    `${i1}flavorDimensions += "env"`,
+    `${i1}productFlavors {`,
+    `${i2}create("prod") {`,
+    `${i3}dimension = "env"`,
+    `${i3}manifestPlaceholders["appLabel"] = "${prodLabel}"`,
+    `${i2}}`,
+    `${i2}create("dev") {`,
+    `${i3}dimension = "env"`,
+    `${i3}applicationIdSuffix = ".dev"`,
+    `${i3}manifestPlaceholders["appLabel"] = "${devLabel}"`,
+    `${i2}}`,
+    `${i1}}`,
+  ].join('\n');
+
+  return `${kts.slice(0, insertAt)}\n\n${block}${kts.slice(insertAt)}`;
+}
+
+/**
+ * Point the `<application>` label at the flavour placeholder so
+ * `manifestPlaceholders["appLabel"]` drives the launcher name.
+ */
+export function injectAndroidManifestLabel(manifestXml: string): string {
+  const appTag = /<application\b[^>]*>/.exec(manifestXml);
+  const region = appTag ? appTag[0] : manifestXml;
+  const label = /android:label\s*=\s*"([^"]*)"/.exec(region);
+  if (!label) return manifestXml;
+  if (label[1] === '${appLabel}') return manifestXml;
+  const patched = region.replace(label[0], 'android:label="${appLabel}"');
+  if (!appTag) return patched;
+  return manifestXml.slice(0, appTag.index) + patched + manifestXml.slice(appTag.index + appTag[0].length);
+}
+
+// ───────────────────────────────────────────────────────────────── iOS (pbxproj)
+
+const IOS_MODES = ['Debug', 'Profile', 'Release'];
+
+interface PbxObject {
+  uuid: string;
+  comment: string;
+  start: number;
+  end: number;
+  text: string;
+}
+
+/**
+ * Clone the build configurations into `<Mode>-dev` / `<Mode>-prod` variants and
+ * register them in **every** `XCConfigurationList` in the project — the
+ * PBXProject's plus each PBXNativeTarget's — each cloned from *its own* base
+ * configs. That is exactly what Xcode does when you add a configuration in the
+ * UI: the configuration appears on the project and on every target.
+ *
+ * N lists ⇒ 6×N new objects (a stock Flutter project has 3: project, Runner,
+ * RunnerTests ⇒ 18). Cloning the app target's configs into the *other* lists
+ * instead breaks two different things, neither of which `xcodebuild -list` or
+ * `-showBuildSettings` notices:
+ *
+ * - The PBXProject's configs carry project-wide settings (`SDKROOT`,
+ *   `SUPPORTED_PLATFORMS`). Without them Xcode resolves the flavour scheme's
+ *   destinations to macOS — "Unable to find a destination matching the provided
+ *   destination specifier: { generic:1, platform:iOS }" — and `flutter build ipa
+ *   --flavor prod` fails.
+ * - Leaving a target (e.g. RunnerTests) *without* a config of a given name makes
+ *   CocoaPods resolve that target against the project-level config, which has no
+ *   `SWIFT_VERSION` while the target's real configs do: "There may only be up to
+ *   1 unique SWIFT_VERSION per target… RunnerTests: Swift / RunnerTests: Swift
+ *   5.0", and `pod install` aborts inside `flutter build ipa`.
+ *
+ * So only the **app target's** clones get identity overrides
+ * (`PRODUCT_BUNDLE_IDENTIFIER`, `APP_DISPLAY_NAME`,
+ * `ASSETCATALOG_COMPILER_APPICON_NAME`); every other list — the project's and
+ * non-app targets' — gets faithful copies of its own base configs, so inherited
+ * settings survive verbatim.
+ *
+ * Hand-rolled and narrowly scoped on purpose — launchpad stays single-dependency,
+ * so no pbxproj parser and no Ruby shell-out. Base configs are only ever *read*,
+ * except for adding `APP_DISPLAY_NAME` to the base *app target* configs so the
+ * untouched no-flavour build keeps its current name once `Info.plist` references
+ * the variable.
+ */
+export function injectIosFlavors(
+  pbxproj: string,
+  c: { bundleId: string; appName: string; devSuffix?: string },
+): string {
+  const objects = scanPbxObjects(pbxproj);
+  if (!objects.length) return pbxproj;
+
+  const nativeTargets = objects.filter((o) => /\bisa = PBXNativeTarget;/.test(o.text));
+  const appTarget = nativeTargets.find((o) =>
+    /productType = "com\.apple\.product-type\.application"/.test(o.text),
+  );
+  const projectObj = objects.find((o) => /\bisa = PBXProject;/.test(o.text));
+  if (!appTarget || !projectObj) return pbxproj;
+
+  const targetListUuid = refOf(appTarget.text, 'buildConfigurationList');
+  const projectListUuid = refOf(projectObj.text, 'buildConfigurationList');
+  if (!targetListUuid || !projectListUuid) return pbxproj;
+
+  const byUuid = new Map(objects.map((o) => [o.uuid, o]));
+  if (!byUuid.has(targetListUuid) || !byUuid.has(projectListUuid)) return pbxproj;
+
+  const configsOf = (list: PbxObject): PbxObject[] =>
+    listedUuids(list.text)
+      .map((u) => byUuid.get(u))
+      .filter((o): o is PbxObject => !!o && /\bisa = XCBuildConfiguration;/.test(o.text));
+
+  // Every configuration list in the project, in file order, each tagged with its
+  // owner (which becomes part of the uuid seed so no two lists share a clone).
+  // A degenerate project pointing two owners at one list is flavoured once, and
+  // the app target wins so the identity overrides are not lost.
+  const owners: { listUuid: string; owner: string; isApp: boolean }[] = [
+    { listUuid: projectListUuid, owner: 'project', isApp: false },
+    ...nativeTargets.flatMap((t) => {
+      const listUuid = refOf(t.text, 'buildConfigurationList');
+      if (!listUuid) return [];
+      const label = configName(t.text) ?? (t.comment || t.uuid);
+      return [{ listUuid, owner: `target:${label}`, isApp: t.uuid === appTarget.uuid }];
+    }),
+  ];
+  const seen = new Map<string, { list: PbxObject; owner: string; isApp: boolean; base: PbxObject[] }>();
+  for (const { listUuid, owner, isApp } of owners) {
+    const list = byUuid.get(listUuid);
+    if (!list) continue;
+    const prev = seen.get(listUuid);
+    if (prev) {
+      if (isApp) Object.assign(prev, { owner, isApp });   // app target wins a shared list
+      continue;
+    }
+    const base = configsOf(list);
+    if (!base.length) continue;   // nothing of its own to clone — leave it alone
+    seen.set(listUuid, { list, owner, isApp, base });
+  }
+  // The project's and the app target's lists must both have resolved, or the file
+  // has a shape we don't understand and we leave it entirely alone.
+  if (!seen.has(projectListUuid) || !seen.has(targetListUuid)) return pbxproj;
+  const lists = [...seen.values()];
+
+  const baseNames = lists.flatMap((l) => l.base.map((o) => configName(o.text))).filter((n): n is string => !!n);
+  // Idempotency: any flavoured clone already present means we're done.
+  if (baseNames.some((n) => new RegExp(`name = "?${escapeRe(n)}-(?:dev|prod)"?;`).test(pbxproj))) return pbxproj;
+
+  const devSuffix = c.devSuffix ?? '.dev';
+  const taken = new Set(pbxproj.match(/[0-9A-F]{24}/g) ?? []);
+
+  // base uuid → the replacement text for that object (itself, plus its clones).
+  const cloned = new Map<string, { base: PbxObject; head: string; made: string[] }>();
+  const edits: { start: number; end: number; text: string }[] = [];
+
+  for (const { list, owner, isApp, base: baseConfigs } of lists) {
+    const minted: { uuid: string; name: string }[] = [];
+    for (const base of baseConfigs) {
+      const name = configName(base.text);
+      if (!name) continue;
+      let slot = cloned.get(base.uuid);
+      if (!slot) cloned.set(base.uuid, (slot = { base, head: base.text, made: [] }));
+      // The base config itself only ever gains APP_DISPLAY_NAME, and only on the
+      // app target — a display name is that target's identity, nobody else's.
+      if (isApp) slot.head = setBuildSetting(slot.head, 'APP_DISPLAY_NAME', c.appName, { quote: true });
+
+      for (const flavor of ['dev', 'prod'] as const) {
+        const cloneName = `${name}-${flavor}`;
+        // The owning list is part of the seed, so clones of the same config name
+        // for different lists get different uuids.
+        const uuid = mintUuid(`${c.bundleId}:${owner}:${cloneName}`, taken);
+        let text = cloneConfig(base.text, uuid, cloneName);
+        if (isApp) {
+          text = setBuildSetting(text, 'APP_DISPLAY_NAME', flavor === 'dev' ? `${c.appName} Dev` : c.appName, { quote: true });
+          if (flavor === 'dev') {
+            text = setBuildSetting(text, 'PRODUCT_BUNDLE_IDENTIFIER', `${c.bundleId}${devSuffix}`);
+            // `AppIcon-dev` is lowercase ON PURPOSE — do not "fix" it to AppIcon-Dev.
+            // Flutter flavor names must be lowercase (the CLI maps `--flavor dev` to the
+            // scheme/config suffix), and `flutter_launcher_icons` emits the asset-catalog
+            // set as `AppIcon-<flavor>`. The native/macOS dev-variant path in devbuild.ts
+            // uses its own `AppIcon-Dev` convention; the two are separate subsystems.
+            text = setBuildSetting(text, 'ASSETCATALOG_COMPILER_APPICON_NAME', 'AppIcon-dev');
+          }
+        }
+        slot.made.push(text);
+        minted.push({ uuid, name: cloneName });
+      }
+    }
+    edits.push({ start: list.start, end: list.end, text: registerConfigs(list.text, minted) });
+  }
+
+  for (const { base, head, made } of cloned.values()) {
+    const indent = lineIndent(pbxproj, base.start);
+    edits.push({ start: base.start, end: base.end, text: [head, ...made].join(`\n${indent}`) });
+  }
+
+  // Apply back-to-front so earlier offsets stay valid.
+  let out = pbxproj;
+  for (const e of edits.sort((a, b) => b.start - a.start)) {
+    out = out.slice(0, e.start) + e.text + out.slice(e.end);
+  }
+  return out;
+}
+
+/** Extend the `project 'Runner', { … }` build-mode map with the flavoured configs. */
+export function injectPodfileConfigs(podfile: string, flavors: string[]): string {
+  const m = /project\s+(['"])[^'"]+\1\s*,\s*\{/.exec(podfile);
+  if (!m) return podfile;
+  const open = podfile.indexOf('{', m.index);
+  const close = matchBrace(podfile, open, rubySkip);
+  const body = podfile.slice(open + 1, close);
+
+  const entryRe = /(['"])([^'"]+)\1\s*=>\s*(:[A-Za-z_]+)/g;
+  const base: { name: string; mode: string }[] = [];
+  const present = new Set<string>();
+  for (let e = entryRe.exec(body); e; e = entryRe.exec(body)) {
+    present.add(e[2]);
+    if (!e[2].includes('-')) base.push({ name: e[2], mode: e[3] });
+  }
+  if (!base.length) return podfile;
+
+  const indentM = /\n([ \t]+)\S/.exec(body);
+  const indent = indentM ? indentM[1] : '  ';
+  const added: string[] = [];
+  for (const flavor of flavors) {
+    for (const b of base) {
+      const name = `${b.name}-${flavor}`;
+      if (present.has(name)) continue;
+      present.add(name);
+      added.push(`${indent}'${name}' => ${b.mode},`);
+    }
+  }
+  if (!added.length) return podfile;
+
+  const insertAt = podfile.lastIndexOf('\n', close);
+  return `${podfile.slice(0, insertAt)}\n${added.join('\n')}${podfile.slice(insertAt)}`;
+}
+
+/**
+ * Turn the base `Runner.xcscheme` into a flavour scheme: Run/Test/Analyze on
+ * `Debug-<flavor>`, Profile on `Profile-<flavor>`, Archive on `Release-<flavor>`.
+ * The caller writes the result to `xcshareddata/xcschemes/<flavor>.xcscheme`.
+ */
+export function iosSchemeXml(flavor: string, base: string): string {
+  const actions: [string, string][] = [
+    ['TestAction', 'Debug'],
+    ['LaunchAction', 'Debug'],
+    ['AnalyzeAction', 'Debug'],
+    ['ProfileAction', 'Profile'],
+    ['ArchiveAction', 'Release'],
+  ];
+  let out = base;
+  for (const [action, mode] of actions) {
+    const re = new RegExp(`(<${action}\\b[\\s\\S]*?buildConfiguration = ")([^"]*)(")`);
+    out = out.replace(re, (_m, head: string, _cur: string, tail: string) => `${head}${mode}-${flavor}${tail}`);
+  }
+  return out;
+}
+
+/** Drive `CFBundleDisplayName` off the per-config `APP_DISPLAY_NAME` build setting. */
+export function injectInfoPlistDisplayName(plistXml: string): string {
+  const VALUE = '$(APP_DISPLAY_NAME)';
+  const existing = /(<key>CFBundleDisplayName<\/key>\s*<string>)([\s\S]*?)(<\/string>)/.exec(plistXml);
+  if (existing) {
+    if (existing[2] === VALUE) return plistXml;
+    return plistXml.replace(existing[0], () => `${existing[1]}${VALUE}${existing[3]}`);
+  }
+  const close = plistXml.lastIndexOf('</dict>');
+  if (close < 0) return plistXml;
+  const lineStart = plistXml.lastIndexOf('\n', close);
+  const indent = plistXml.slice(lineStart + 1, close).match(/^[ \t]*/)?.[0] ?? '';
+  const entry = `\n${indent}\t<key>CFBundleDisplayName</key>\n${indent}\t<string>${VALUE}</string>`;
+  return plistXml.slice(0, lineStart) + entry + plistXml.slice(lineStart);
+}
+
+// ───────────────────────────────────────────────────────────── composition (apply)
+
+/** What `cmdApply` needs to flavour one Flutter app dir. */
+export interface FlavorWiringConfig {
+  workdir: string;        // repo-relative Flutter app dir ('.' or 'apps/mobile')
+  appName: string;
+  bundleId: string;       // iOS bundle id — dev gets the `.dev` suffix
+  androidLabel?: string;  // prod launcher label; defaults to the manifest's current one
+}
+
+const FLAVORS = ['dev', 'prod'] as const;
+const SCHEMES_DIR = 'ios/Runner.xcodeproj/xcshareddata/xcschemes';
+
+/**
+ * Wire dev/prod flavours across a Flutter app dir by composing the injectors
+ * above. Every step is guarded by `existsSync` and idempotent: an app missing a
+ * file (no Podfile, no Info.plist, an Android-only or iOS-only app) simply skips
+ * it, and a file whose contents don't change is not rewritten.
+ *
+ * Groovy `android/app/build.gradle` is deliberately skipped — the injector is
+ * Kotlin-DSL only, and silently emitting Groovy-shaped text would corrupt the
+ * build file. Groovy support is a future milestone.
+ *
+ * Returns the repo-relative paths actually changed (empty on a re-run).
+ */
+export function wireFlutterFlavors(repo: string, c: FlavorWiringConfig): string[] {
+  const changed: string[] = [];
+  const rel = (p: string) => (c.workdir === '.' ? p : `${c.workdir}/${p}`);
+  const patch = (relPath: string, fn: (s: string) => string): void => {
+    const abs = join(repo, relPath);
+    if (!existsSync(abs)) return;
+    const orig = readFileSync(abs, 'utf8');
+    const next = fn(orig);
+    if (next === orig) return;   // unchanged → don't rewrite, don't report
+    writeFileSync(abs, next, 'utf8');
+    changed.push(relPath);
+  };
+
+  // Prod keeps the app's current launcher name, so read the label before the
+  // manifest is rewritten to `${appLabel}` (a re-run finds the placeholder and
+  // falls through to appName — by then the flavour block already exists).
+  const manifestRel = rel('android/app/src/main/AndroidManifest.xml');
+  const prodLabel = c.androidLabel ?? currentManifestLabel(join(repo, manifestRel));
+
+  patch(rel('android/app/build.gradle.kts'), (s) =>
+    injectAndroidFlavors(s, { appName: c.appName, prodLabel }));
+  patch(manifestRel, injectAndroidManifestLabel);
+  patch(rel('ios/Runner.xcodeproj/project.pbxproj'), (s) =>
+    injectIosFlavors(s, { bundleId: c.bundleId, appName: c.appName }));
+  patch(rel('ios/Podfile'), (s) => injectPodfileConfigs(s, [...FLAVORS]));
+  patch(rel('ios/Runner/Info.plist'), injectInfoPlistDisplayName);
+
+  // Flavour schemes are copies of the base Runner scheme, which stays in place.
+  const baseSchemeAbs = join(repo, rel(`${SCHEMES_DIR}/Runner.xcscheme`));
+  if (existsSync(baseSchemeAbs)) {
+    const base = readFileSync(baseSchemeAbs, 'utf8');
+    for (const flavor of FLAVORS) {
+      const schemeRel = rel(`${SCHEMES_DIR}/${flavor}.xcscheme`);
+      const abs = join(repo, schemeRel);
+      if (existsSync(abs)) continue;   // never clobber a hand-tuned scheme
+      mkdirSync(dirname(abs), { recursive: true });
+      writeFileSync(abs, iosSchemeXml(flavor, base), 'utf8');
+      changed.push(schemeRel);
+    }
+  }
+
+  return changed;
+}
+
+/** Keys whose value is an icon path (`adaptive_icon_background` may be a colour — never touched). */
+const ICON_PATH_KEYS = ['image_path', 'image_path_android', 'image_path_ios', 'adaptive_icon_foreground'];
+
+/**
+ * Write the dev-flavour `flutter_launcher_icons` config (§5): the pubspec's own
+ * block, repointed at the `-dev` icon masters, plus `flavor: dev`. Rendering the
+ * badged PNGs is a runbook step (`dart run flutter_launcher_icons -f …`) — this
+ * only lands the config, so launchpad stays shell-out free.
+ *
+ * Returns `[]` (badge skipped) when the app has no `flutter_launcher_icons:`
+ * block, and never overwrites an existing dev config.
+ */
+export function writeFlavorIconConfig(repo: string, c: FlavorWiringConfig): string[] {
+  const rel = (p: string) => (c.workdir === '.' ? p : `${c.workdir}/${p}`);
+  const pubspecAbs = join(repo, rel('pubspec.yaml'));
+  if (!existsSync(pubspecAbs)) return [];
+
+  let block: Record<string, unknown> | undefined;
+  try {
+    const doc = parse(readFileSync(pubspecAbs, 'utf8')) as Record<string, unknown> | null;
+    const b = doc?.flutter_launcher_icons;
+    if (b && typeof b === 'object' && !Array.isArray(b)) block = { ...(b as Record<string, unknown>) };
+  } catch {
+    return [];   // unparseable pubspec — leave the app alone
+  }
+  if (!block) return [];
+
+  const outRel = rel('flutter_launcher_icons-dev.yaml');
+  const outAbs = join(repo, outRel);
+  if (existsSync(outAbs)) return [];   // idempotent: a written config is never regenerated
+
+  for (const key of ICON_PATH_KEYS) {
+    const v = block[key];
+    if (typeof v === 'string' && v) block[key] = devVariantPath(v);
+  }
+  block.flavor = 'dev';
+
+  const header = [
+    '# launchpad — dev flavour icons. Generated once; edit freely (never regenerated).',
+    '# Badge the masters, then: dart run flutter_launcher_icons -f flutter_launcher_icons-dev.yaml',
+    '',
+  ].join('\n');
+  mkdirSync(dirname(outAbs), { recursive: true });
+  writeFileSync(outAbs, header + stringify({ flutter_launcher_icons: block }), 'utf8');
+  return [outRel];
+}
+
+/** `assets/icon.png` → `assets/icon-dev.png` (extension-less paths just get the suffix). */
+function devVariantPath(p: string): string {
+  const slash = p.lastIndexOf('/');
+  const dot = p.lastIndexOf('.');
+  return dot > slash + 1 ? `${p.slice(0, dot)}-dev${p.slice(dot)}` : `${p}-dev`;
+}
+
+/** One wiring target per Flutter workdir, in surface order. */
+export interface FlavorTarget {
+  surfaceId: string;          // the surface the wiring is logged against
+  config: FlavorWiringConfig;
+}
+
+/**
+ * The Flutter app dirs `apply` should flavour, derived from the wired surfaces.
+ *
+ * An `ios` surface counts when its config says `framework: flutter`; an
+ * `android` surface counts when its workdir holds a `pubspec.yaml`
+ * (`AndroidConfig` has no framework field). A pair sharing `apps/mobile`
+ * collapses into a single target so the work happens exactly once — with the
+ * bundle id taken from whichever surface knows it (the iOS one).
+ */
+export function flutterFlavorTargets(repo: string, surfaces: Surface[]): FlavorTarget[] {
+  const byWorkdir = new Map<string, FlavorTarget>();
+  for (const s of surfaces) {
+    if (!s.config) continue;
+    let workdir: string | undefined;
+    let bundleId = s.bundleId ?? '';
+    if (s.archetype === 'ios') {
+      const cfg = s.config as IosConfig;
+      if (cfg.framework !== 'flutter') continue;
+      workdir = cfg.workdir;
+      bundleId = cfg.bundleId || bundleId;
+    } else if (s.archetype === 'android') {
+      const cfg = s.config as AndroidConfig;
+      const wd = cfg.workdir;
+      if (!existsSync(join(repo, wd === '.' ? 'pubspec.yaml' : `${wd}/pubspec.yaml`))) continue;
+      workdir = wd;
+    } else continue;
+    if (workdir == null) continue;
+
+    const appName = (s.config as { appName?: string }).appName ?? s.id;
+    const existing = byWorkdir.get(workdir);
+    if (existing) {
+      // Later surfaces only fill in what the first one didn't know.
+      if (!existing.config.bundleId && bundleId) existing.config.bundleId = bundleId;
+      continue;
+    }
+    byWorkdir.set(workdir, { surfaceId: s.id, config: { workdir, appName, bundleId } });
+  }
+  return [...byWorkdir.values()];
+}
+
+/**
+ * `--dart-define` args for a Fastfile build step. The record maps a define name
+ * to the CI environment variable holding its value (defaulting to the same
+ * name), and the value is fetched at build time — `ENV.fetch` fails loudly on a
+ * missing secret, and nothing sensitive is ever written into the repo. Sorted
+ * for deterministic output.
+ */
+/**
+ * The workflow `env:` lines feeding `dartDefineArgs`. The Fastfile does
+ * `ENV.fetch("<VAR>")`, which raises KeyError if the workflow never exported it
+ * — so the build step MUST carry one line per define. Values come from repo
+ * secrets; nothing is ever inlined into the repo.
+ *
+ * Returns a leading-newline fragment (or '') so it can be appended to the last
+ * line of an existing `env:` block.
+ */
+export function dartDefineEnv(defines?: Record<string, string>): string {
+  if (!defines) return '';
+  const keys = Object.keys(defines).sort();
+  if (!keys.length) return '';
+  return '\n' + keys
+    .map((k) => `          ${defines[k] || k}: \${{ secrets.${defines[k] || k} }}`)
+    .join('\n');
+}
+
+export function dartDefineArgs(defines?: Record<string, string>): string[] {
+  if (!defines) return [];
+  return Object.keys(defines)
+    .sort()
+    .map((k) => `--dart-define=${k}=#{ENV.fetch("${defines[k] || k}")}`);
+}
+
+/** The app's current `android:label`, unless it's already the flavour placeholder. */
+function currentManifestLabel(manifestAbs: string): string | undefined {
+  if (!existsSync(manifestAbs)) return undefined;
+  const xml = readFileSync(manifestAbs, 'utf8');
+  const appTag = /<application\b[^>]*>/.exec(xml);
+  const label = /android:label\s*=\s*"([^"]*)"/.exec(appTag ? appTag[0] : xml)?.[1];
+  return label && label !== '${appLabel}' ? label : undefined;
+}
+
+// ─────────────────────────────────────────────────────────────────────── helpers
+
+export type Skipper = (src: string, i: number) => number;
+
+/** Skip a double-quoted string starting at `i`; returns the index of its closing quote. */
+function skipQuoted(src: string, i: number): number {
+  for (let j = i + 1; j < src.length; j++) {
+    if (src[j] === '\\') {
+      j++;
+      continue;
+    }
+    if (src[j] === '"') return j;
+  }
+  return src.length;
+}
+
+/** pbxproj: quoted strings (shellScripts contain `${…}`) and `/* … *\/` comments. */
+function pbxSkip(src: string, i: number): number {
+  if (src[i] === '"') return skipQuoted(src, i);
+  if (src[i] === '/' && src[i + 1] === '*') {
+    const e = src.indexOf('*/', i + 2);
+    return e < 0 ? src.length : e + 1;
+  }
+  return i;
+}
+
+/**
+ * Kotlin DSL: strings (incl. `"${…}"` templates), `//` and `/* … *\/` comments.
+ * Exported (with `matchBrace`) for `androidsigning.ts`, the other Kotlin-DSL
+ * transform over `android/app/build.gradle.kts`.
+ */
+export function ktSkip(src: string, i: number): number {
+  if (src[i] === '"') return skipQuoted(src, i);
+  if (src[i] === '/' && src[i + 1] === '/') {
+    const e = src.indexOf('\n', i);
+    return e < 0 ? src.length : e - 1;
+  }
+  if (src[i] === '/' && src[i + 1] === '*') {
+    const e = src.indexOf('*/', i + 2);
+    return e < 0 ? src.length : e + 1;
+  }
+  return i;
+}
+
+/** Ruby: strings and `#` comments. */
+function rubySkip(src: string, i: number): number {
+  if (src[i] === '"' || src[i] === "'") {
+    const q = src[i];
+    for (let j = i + 1; j < src.length; j++) {
+      if (src[j] === '\\') {
+        j++;
+        continue;
+      }
+      if (src[j] === q) return j;
+    }
+    return src.length;
+  }
+  if (src[i] === '#') {
+    const e = src.indexOf('\n', i);
+    return e < 0 ? src.length : e - 1;
+  }
+  return i;
+}
+
+/** Index of the `}` closing the block whose `{` is at (or after) `open`. */
+export function matchBrace(src: string, open: number, skip: Skipper = pbxSkip): number {
+  let depth = 0;
+  for (let i = open; i < src.length; i++) {
+    const skipped = skip(src, i);
+    if (skipped !== i) {
+      i = skipped;
+      continue;
+    }
+    if (src[i] === '{') depth++;
+    else if (src[i] === '}') {
+      depth--;
+      if (depth === 0) return i;
+    }
+  }
+  return src.length - 1;
+}
+
+/**
+ * Direct children of the pbxproj `objects = { … }` dict. Deliberately shallow:
+ * we only need native targets, the project object, build configurations and
+ * configuration lists, and nested dicts (e.g. `TargetAttributes`) must not be
+ * mistaken for top-level objects.
+ */
+function scanPbxObjects(src: string): PbxObject[] {
+  const objOpen = src.indexOf('objects = {');
+  if (objOpen < 0) return [];
+  const brace = src.indexOf('{', objOpen);
+  const objClose = matchBrace(src, brace);
+  const entryRe = /^([0-9A-F]{24})(?: \/\* ((?:(?!\*\/)[\s\S])*?) \*\/)? = \{/;
+  const out: PbxObject[] = [];
+  let i = brace + 1;
+  while (i < objClose) {
+    const ch = src[i];
+    if (ch === '"' || (ch === '/' && src[i + 1] === '*')) {
+      i = pbxSkip(src, i) + 1;
+      continue;
+    }
+    if (/\s/.test(ch) || ch === ';') {
+      i++;
+      continue;
+    }
+    const m = entryRe.exec(src.slice(i, i + 240));
+    if (m) {
+      const open = i + m[0].length - 1;
+      const close = matchBrace(src, open);
+      let end = close + 1;
+      if (src[end] === ';') end++;
+      out.push({ uuid: m[1], comment: m[2] ?? '', start: i, end, text: src.slice(i, end) });
+      i = end;
+      continue;
+    }
+    const nl = src.indexOf('\n', i);
+    i = nl < 0 ? objClose : nl + 1;
+  }
+  return out;
+}
+
+function refOf(objText: string, key: string): string | undefined {
+  return new RegExp(`\\b${key} = ([0-9A-F]{24})`).exec(objText)?.[1];
+}
+
+function listedUuids(listText: string): string[] {
+  const m = /buildConfigurations = \(([\s\S]*?)\);/.exec(listText);
+  return m ? (m[1].match(/[0-9A-F]{24}/g) ?? []) : [];
+}
+
+function configName(objText: string): string | undefined {
+  return /\n[ \t]*name = "?([^";\n]+)"?;/.exec(objText)?.[1];
+}
+
+function lineIndent(src: string, at: number): string {
+  const start = src.lastIndexOf('\n', at) + 1;
+  return src.slice(start, at).match(/^[ \t]*/)?.[0] ?? '';
+}
+
+function escapeRe(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function quoted(v: string): string {
+  return `"${v.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`;
+}
+
+/** Quote a build-setting value the way Xcode would. */
+function pbxValue(v: string): string {
+  return /^[A-Za-z0-9_.$/]+$/.test(v) ? v : quoted(v);
+}
+
+/** Deterministic 24-hex uuid derived from `seed`, guaranteed unused. */
+function mintUuid(seed: string, taken: Set<string>): string {
+  for (let n = 0; ; n++) {
+    const uuid = createHash('sha1')
+      .update(`launchpad-flavors:${seed}:${n}`)
+      .digest('hex')
+      .slice(0, 24)
+      .toUpperCase();
+    if (!taken.has(uuid)) {
+      taken.add(uuid);
+      return uuid;
+    }
+  }
+}
+
+/** Copy an XCBuildConfiguration object under a new uuid + name. */
+function cloneConfig(baseText: string, uuid: string, name: string): string {
+  return baseText
+    .replace(/^[0-9A-F]{24}(?: \/\* (?:(?!\*\/)[\s\S])*? \*\/)? = \{/, `${uuid} /* ${name} */ = {`)
+    .replace(/\n([ \t]*)name = [^\n]*;/, (_m, ind: string) => `\n${ind}name = ${pbxValue(name)};`);
+}
+
+/**
+ * Set (or replace) one key in an XCBuildConfiguration's `buildSettings` dict,
+ * keeping Xcode's alphabetical ordering. `quote` forces quoting for values that
+ * are user-facing strings (a display name is quoted even when it's one word, so
+ * renaming the app later never changes the quoting).
+ */
+function setBuildSetting(objText: string, key: string, value: string, opts?: { quote?: boolean }): string {
+  const at = objText.indexOf('buildSettings = {');
+  if (at < 0) return objText;
+  const open = objText.indexOf('{', at);
+  const close = matchBrace(objText, open);
+  const block = objText.slice(open + 1, close);
+  const lines = block.split('\n');
+  const entryIndent = lines.map((l) => /^([ \t]+)\S/.exec(l)?.[1]).find((x): x is string => !!x) ?? '\t\t\t\t';
+  const keyOf = (l: string): string | undefined => {
+    if (!l.startsWith(entryIndent) || /^\s/.test(l.slice(entryIndent.length))) return undefined;
+    return /^(?:"([^"]+)"|([A-Za-z_][A-Za-z0-9_]*)) = /.exec(l.slice(entryIndent.length))?.slice(1).find(Boolean);
+  };
+  const entry = `${entryIndent}${key} = ${opts?.quote ? quoted(value) : pbxValue(value)};`;
+
+  let replaceFrom = -1;
+  let replaceTo = -1;
+  let insertAt = -1;
+  for (let i = 0; i < lines.length; i++) {
+    const k = keyOf(lines[i]);
+    if (!k) continue;
+    if (k === key) {
+      replaceFrom = i;
+      replaceTo = i;
+      // Multi-line values (arrays) run until the line that closes them.
+      while (replaceTo < lines.length - 1 && !lines[replaceTo].trimEnd().endsWith(';')) replaceTo++;
+      break;
+    }
+    if (insertAt < 0 && k > key) insertAt = i;
+  }
+
+  const next = [...lines];
+  if (replaceFrom >= 0) next.splice(replaceFrom, replaceTo - replaceFrom + 1, entry);
+  else if (insertAt >= 0) next.splice(insertAt, 0, entry);
+  else next.splice(Math.max(lines.length - 1, 1), 0, entry);
+
+  return objText.slice(0, open + 1) + next.join('\n') + objText.slice(close);
+}
+
+/** Append the flavoured config uuids to an XCConfigurationList's list. */
+function registerConfigs(listText: string, clones: { uuid: string; name: string }[]): string {
+  const m = /buildConfigurations = \(([\s\S]*?)\n([ \t]*)\);/.exec(listText);
+  if (!m) return listText;
+  const closeAt = m.index + m[0].length - `\n${m[2]});`.length;
+  const indent = /\n([ \t]+)\S/.exec(m[1])?.[1] ?? `${m[2]}\t`;
+  const missing = clones.filter((c) => !listText.includes(c.uuid));
+  if (!missing.length) return listText;
+  const added = missing.map((c) => `\n${indent}${c.uuid} /* ${c.name} */,`).join('');
+  return listText.slice(0, closeAt) + added + listText.slice(closeAt);
+}

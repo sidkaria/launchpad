@@ -1,0 +1,47 @@
+name: Release {{APP_NAME}} (iOS)
+
+on:
+{{ON_TRIGGERS}}
+
+permissions:
+  contents: read
+
+jobs:
+  ios:
+    runs-on: {{RUNS_ON}}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+{{SCHEDULE_GUARD}}      # Build with the newest stable Xcode the runner has, so apps using the
+      # latest SDK compile and cloud signing uses current tooling. The default
+      # runner Xcode often lags the installed one.
+      - name: Select latest stable Xcode
+{{STEP_IF}}        run: |
+          XC=$(ls -d /Applications/Xcode_*.app 2>/dev/null | grep -vi beta | sort -V | tail -1)
+          [ -n "$XC" ] && sudo xcode-select -s "$XC/Contents/Developer" || true
+          xcodebuild -version
+{{FLUTTER_SETUP}}
+{{CODEGEN_STEP}}{{PREBUILD_STEP}}
+      # Only install when missing. A self-hosted Mac usually has fastlane from
+      # Homebrew, where `gem install` can fail on SIP//Library permissions or
+      # silently shadow the brew copy; GitHub-hosted macOS runners ship it
+      # preinstalled, so this is a fast no-op there.
+      - name: Install fastlane
+{{STEP_IF}}        run: command -v fastlane >/dev/null || gem install fastlane -N
+
+      - name: Write App Store Connect API key
+{{STEP_IF}}        env:
+          ASC_KEY_P8: ${{ secrets.ASC_KEY_P8 }}
+        run: printf '%s' "$ASC_KEY_P8" > "$RUNNER_TEMP/asc.p8"
+
+{{SIGNING_SETUP_STEPS}}      - name: Build and ship
+{{STEP_IF}}        working-directory: {{WORKDIR}}
+        env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_KEY_PATH: ${{ runner.temp }}/asc.p8{{MATCH_ENV}}{{DART_DEFINE_ENV}}
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/* ]]; then LANE=appstore; else LANE=beta; fi
+          fastlane "$LANE"{{SIGNING_CLEANUP_STEP}}

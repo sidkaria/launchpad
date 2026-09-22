@@ -1,0 +1,18 @@
+# launchpad Android — generated. Re-run /launchpad:setup to regenerate. Do not hand-edit.
+default_platform(:android)
+
+platform :android do
+  desc "Distribute a release build to Firebase App Distribution testers"
+  lane :beta do
+    build_number = `git rev-list --count HEAD`.strip
+    {{BUILD_STEP}}
+    firebase_app_distribution(
+      app: "{{FIREBASE_APP_ID}}",
+      service_credentials_file: ENV.fetch("FIREBASE_SA_PATH"),
+      groups: "{{TESTER_GROUP}}",
+      android_artifact_type: "APK",
+      android_artifact_path: "{{ARTIFACT_PATH}}",
+      release_notes: "Build ##{build_number}"
+    )
+  end
+end

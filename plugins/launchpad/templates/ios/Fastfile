@@ -1,0 +1,49 @@
+# launchpad iOS — generated. Re-run /launchpad:setup to regenerate. Do not hand-edit.
+default_platform(:ios)
+
+def asc_key
+  app_store_connect_api_key(
+    key_id: ENV.fetch("ASC_KEY_ID"),
+    issuer_id: ENV.fetch("ASC_ISSUER_ID"),
+    key_filepath: ENV.fetch("ASC_KEY_PATH"),
+    duration: 1200,
+    in_house: false
+  )
+end
+{{HELPERS}}
+platform :ios do
+  desc "Prepare App Store code signing"
+  private_lane :signing do
+{{SIGNING_LANE_BODY}}
+  end
+
+  desc "Build a signed App Store IPA"
+  private_lane :build_ipa do
+    signing
+    {{BUILD_STEP}}
+  end
+
+  desc "Ship to TestFlight internal testers"
+  lane :beta do
+    build_ipa
+    upload_to_testflight(
+      api_key: asc_key,
+{{IPA_ARG}}      skip_waiting_for_build_processing: true,
+      skip_submission: true,
+      distribute_external: false
+    )
+  end
+
+  desc "Upload to App Store (binary only; submit for review manually)"
+  lane :appstore do
+    build_ipa
+    upload_to_app_store(
+      api_key: asc_key,
+{{IPA_ARG}}      skip_metadata: true,
+      skip_screenshots: true,
+      submit_for_review: false,
+      force: true,
+      precheck_include_in_app_purchases: false
+    )
+  end
+end

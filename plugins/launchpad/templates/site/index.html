@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{APP_NAME}}</title>
+<style>
+  :root { color-scheme: light dark; }
+  body { font-family: -apple-system, system-ui, sans-serif; max-width: 640px; margin: 12vh auto; padding: 0 24px; line-height: 1.6; }
+  h1 { font-size: 2.5rem; margin: 0 0 .25rem; }
+  .tagline { font-size: 1.2rem; opacity: .75; margin: 0 0 2rem; }
+  a.download { display: inline-block; padding: 12px 22px; border-radius: 10px; background: #1d9e75; color: #fff; text-decoration: none; font-weight: 500; }
+  .version { font-size: .9rem; opacity: .6; margin-top: 1rem; }
+  .notes { margin-top: 2rem; font-size: .95rem; opacity: .85; }
+</style>
+</head>
+<body>
+  <h1>{{APP_NAME}}</h1>
+  <p class="tagline">{{TAGLINE}}</p>
+  <a class="download" id="download" href="#">Download for macOS</a>
+  <p class="version" id="version"></p>
+  <section class="notes" id="notes"></section>
+  <script>
+    const APPCAST = "{{APPCAST_URL}}";
+    fetch(APPCAST).then(r => r.text()).then(xml => {
+      const doc = new DOMParser().parseFromString(xml, "application/xml");
+      const item = doc.querySelector("item");
+      if (!item) return;
+      const url = item.querySelector("enclosure")?.getAttribute("url");
+      if (url) document.getElementById("download").href = url;
+      const ver = item.getElementsByTagNameNS("*", "shortVersionString")[0]?.textContent
+                || item.getElementsByTagNameNS("*", "version")[0]?.textContent || "";
+      document.getElementById("version").textContent = ver ? ("Latest version " + ver) : "";
+      const desc = item.querySelector("description")?.textContent || "";
+      document.getElementById("notes").innerHTML = desc;
+    }).catch(() => {});
+  </script>
+</body>
+</html>

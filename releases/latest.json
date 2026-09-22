@@ -1,0 +1,8 @@
+{
+  "version": "0.1.0",
+  "notes": [
+    "First public release.",
+    "Ships: native iOS and macOS (Xcode), Flutter (iOS + Android), twelve web frameworks to Vercel, static sites to Cloudflare Pages.",
+    "Free in every copy: detect, setup, score, status, doctor, confirm, report, dashboard."
+  ]
+}

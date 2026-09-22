@@ -1,0 +1,31 @@
+name: Deploy {{APP_NAME}} site
+
+# Trunk-based: a push to the Pages project's production branch (e.g. main) deploys
+# to production / your custom domain; every other branch gets a throwaway preview
+# URL. Cloudflare decides prod-vs-preview by comparing --branch to the project's
+# configured production_branch (set by launchpad setup).
+#
+# The `paths:` filter below is absent when the site IS the repository root:
+# GitHub matches path filters against root-relative paths, so there is nothing
+# for a root-level site to filter against, and a filter that cannot exclude
+# anything can still fail to match — a deploy that never fires looks exactly
+# like a correct skip.
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - '**'
+{{PATHS_FILTER}}
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Deploy to Cloudflare Pages
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: npx --yes wrangler@3 pages deploy {{SITE_DIR}} --project-name={{PAGES_PROJECT}} --branch="${{ github.ref_name }}"

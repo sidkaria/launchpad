@@ -1,0 +1,8 @@
+{
+  "version": "0.1.0",
+  "files": 403,
+  "vendored": [
+    "plugins/launchpad/node_modules/yaml"
+  ],
+  "built": "2026-09-22T19:13:05.989Z"
+}
