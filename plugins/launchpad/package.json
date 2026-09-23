@@ -1,6 +1,6 @@
 {
   "name": "launchpad-cli",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": true,
   "type": "module",
   "bin": {
@@ -12,7 +12,8 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "publish": "npm run build && node ../../scripts/publish.mjs && node ../../scripts/verify-package.mjs",
-    "verify": "node ../../scripts/verify-package.mjs"
+    "verify": "node ../../scripts/verify-package.mjs",
+    "readme": "npm run build && node scripts/readme.mjs"
   },
   "dependencies": {
     "yaml": "^2.5.1"

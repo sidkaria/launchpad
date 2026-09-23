@@ -91,7 +91,13 @@ git tag -a <tagPrefix><version> -m "<notes line 1>
 <notes line 2>" && git push origin <tagPrefix><version>
 ```
 
-CI then: build → Developer ID sign → **notarize** → DMG → `generate_appcast` → upload to R2. Notarization dominates, ~10–20 min. When it finishes the DMG and appcast are live at `https://<appcastDomain>/appcast.xml`, and existing installs auto-update via Sparkle.
+CI then: build → Developer ID sign → **notarize** → DMG → `generate_appcast` → upload to R2 → refresh `<appName>-latest.dmg` → **read `https://<appcastDomain>/appcast.xml` back and fail unless it offers this version**. Notarization dominates, ~10–20 min. Only when that last step is green is the release live for existing installs; the build log's `Architectures:` line says what the DMG runs on — check it against any hardware claim on the site. The default build is `arm64`: Apple Silicon only — Intel Macs cannot run it; `architectures: universal` on the surface includes them, and such a release fails if the binary lacks either half.
+
+Before tagging a Mac release, three checks that each cost a shipped app a release:
+
+- **The build number went up.** Sparkle offers an update only when `CFBundleVersion` (`CURRENT_PROJECT_VERSION`) increases; `launchpad release` bumps it together with the marketing version in the project file. A version set only in `Info.plist` is overridden by the project and never offered.
+- **Every feed URL that has ever shipped still answers.** If the app's `SUFeedURL` has ever changed, each old URL must still redirect to the current appcast — `curl -sL <old-url> | grep -c "<item>"` — or the installs that carry it never update again.
+- **For a risky release, update your own copy first.** The feed is global: point one installed copy at a local feed (`defaults write <bundle-id> SUFeedURL http://localhost:8787/appcast-staging.xml`), update through the real updater, then `defaults delete <bundle-id> SUFeedURL`.
 
 ### iOS (`ios`)
 
@@ -105,6 +111,8 @@ git tag -a <tagPrefix><version> -m "<release notes>" && git push origin <tagPref
 ```
 
 ~10–20 min including App Store processing; the build then appears under TestFlight → Internal Testing.
+
+**Added a capability since the last release** (Sign in with Apple, push, iCloud — any new key in the `.entitlements`)? Enable it on the App ID in the developer portal first, and on a `match`-signed app regenerate the profile once with `fastlane match appstore --force`. CI runs `match` read-only and will otherwise reinstall the old profile, and the build dies late in `xcodebuild` with "provisioning profile … doesn't include the … entitlement".
 
 ### Android (`android`)
 
@@ -129,6 +137,10 @@ Nothing to trigger. Vercel's native git integration deploys production on a push
 ### Static site (`static-site`)
 
 Push to `config.productionBranch` → production; any other branch → a throwaway preview URL. Same verification rule as above.
+
+### Before the first paid release
+
+If the app sells through a Lemon Squeezy checkout, **buy it once yourself, with a real card, from the exact checkout URL that is about to ship**, then refund it. Test-mode and live checkout URLs look identical, and a shipped app once went out with the test-mode one — real buyers could not pay. Confirm the price the checkout charges is the price the site and the paywall show.
 
 ## 3. Report honestly
 

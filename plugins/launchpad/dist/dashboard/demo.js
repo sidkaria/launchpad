@@ -228,6 +228,20 @@ export const DEMO_APPS = [
                 name: 'Ketchbook', test: 'xcodebuild test -scheme Ketchbook -destination "platform=iOS Simulator,name=iPhone 16"',
                 blurb: 'Recipes you actually cook, in the order you actually cook them.',
             });
+            /**
+             * A Fastfile the author wrote themselves, months before launchpad.
+             *
+             * The fleet had no repository in the state most real ones are in — already
+             * shipping *somehow*, with a pipeline nobody has decided about yet. That
+             * is the single most consequential question in onboarding (PLAYBOOK §5),
+             * and with every demo pipeline pre-decided there was nowhere to photograph
+             * it. Deliberately not launchpad-shaped: no generated stamp, a lane name
+             * launchpad would not choose.
+             */
+            w(join(repo, 'fastlane', 'Fastfile'), ['default_platform(:ios)', '', 'platform :ios do',
+                '  desc "Upload a build to TestFlight"', '  lane :beta do',
+                '    build_app(scheme: "Ketchbook")', '    upload_to_testflight(skip_waiting_for_build_processing: true)',
+                '  end', 'end', ''].join('\n'));
             w(join(repo, 'Package.swift'), ['// swift-tools-version:5.10', 'import PackageDescription', 'let package = Package(',
                 '  name: "Ketchbook",', '  dependencies: [',
                 '    .package(url: "https://github.com/getsentry/sentry-cocoa", from: "8.0.0"),',
@@ -236,18 +250,31 @@ export const DEMO_APPS = [
                 'jobs:', '  testflight:', '    runs-on: macos-14', '    steps:', '      - uses: actions/checkout@v4', ''].join('\n'));
             icon(repo, 'Ketchbook', join('Ketchbook', 'Assets.xcassets', 'AppIcon.appiconset', 'icon.png'));
             storeAssets(repo, 'Ketchbook', { platform: 'ios', shots: 5 });
-            gitRepo(repo, { tags: { 'v0.9.2+88': 'd10c5b2e8a934f7c1b6e0a45d92f38c7b1e5a064' }, head: '81c4a0fe57b2396d8e1cb0a7f34d52698a1e7b3f' });
-            dateTag(repo, 'v0.9.2+88', '2026-09-11T08:05:00Z');
+            // No tags: Ketchbook has never shipped. Every other project in the fleet
+            // has, so without this there was no "first release on this channel" to
+            // photograph — and that is the one confirmation the question bank says is
+            // asked every single time, whatever the settings are.
+            gitRepo(repo, { head: '81c4a0fe57b2396d8e1cb0a7f34d52698a1e7b3f' });
         },
         state: () => ({
             project: 'Ketchbook',
             surfaces: [
-                S('ios', 'ios', ['Ketchbook.xcodeproj', 'Package.swift declares an iOS app target'], {
-                    scheme: 'Ketchbook', bundleId: 'com.ketchbook.app', tagPrefix: 'v',
-                    runsOn: 'macos-latest', distributeOn: ['tag', 'manual'],
-                }),
+                // `pending`, not `wired`: the Fastfile below has no disposition yet, and
+                // until that is answered launchpad has not written anything here. It is
+                // also the only project in the fleet whose Decisions tab reads "would
+                // choose" rather than "launchpad chose" — the state every buyer is in
+                // when they are deciding whether to pay.
+                {
+                    id: 'ios', archetype: 'ios', status: 'pending', confidence: 'high',
+                    evidence: ['Ketchbook.xcodeproj', 'Package.swift declares an iOS app target'],
+                    config: {
+                        scheme: 'Ketchbook', bundleId: 'com.ketchbook.app', tagPrefix: 'v',
+                        runsOn: 'macos-latest', distributeOn: ['tag', 'manual'],
+                    },
+                },
             ],
-            pipelines: [], credentialsRequired: [],
+            pipelines: [{ kind: 'fastlane', path: 'fastlane/Fastfile' }],
+            credentialsRequired: [],
         }),
     },
     {
@@ -264,9 +291,10 @@ export const DEMO_APPS = [
                 '            storeFile = file(System.getenv("ANDROID_KEYSTORE_PATH") ?: "upload.jks")',
                 '        }', '    }', '    buildTypes { release { signingConfig = signingConfigs.getByName("release") } }',
                 '}', ''].join('\n'));
-            w(join(repo, '.github', 'workflows', 'launchpad-android-release.yml'), ['name: launchpad · Android release', 'on:', '  schedule:', "    - cron: '0 3 * * *'",
-                '  workflow_dispatch:', 'jobs:', '  firebase:', '    runs-on: ubuntu-latest',
-                '    steps:', '      - uses: actions/checkout@v4', ''].join('\n'));
+            // No launchpad release workflow, on purpose: this app is native Gradle and
+            // `apply` refuses it (DECISIONS.md, 2026-09-21 — "Android native is
+            // `recognised`… `apply` refuses it by framework"). Writing one here would
+            // photograph a pipeline the product declines to produce.
             icon(repo, 'Slatepad', join('android', 'app', 'src', 'main', 'res', 'mipmap-xxxhdpi', 'ic_launcher.png'));
             storeAssets(repo, 'Slatepad', { platform: 'android', feature: true, shots: 4 });
             writeConfirmations(repo, { 'keystore-backup': { at: '2026-07-04', note: 'Encrypted backup drive + offsite copy' } });
@@ -276,11 +304,24 @@ export const DEMO_APPS = [
         state: () => ({
             project: 'Slatepad',
             surfaces: [
-                S('android', 'android', ['android/app/build.gradle.kts'], {
-                    applicationId: 'ink.slatepad', tagPrefix: 'v',
-                    firebaseAppId: '1:733920184455:android:9a8b7c6d5e4f3a2b', testerGroup: 'early-readers',
-                    distributeOn: ['schedule'], schedule: '0 3 * * *',
-                }),
+                /**
+                 * Native Gradle, and therefore refused — which is what this repository's
+                 * own files always said. There is no `pubspec.yaml` anywhere in it, its
+                 * gate is `./gradlew test`, and its build file is Kotlin DSL. The state
+                 * used to leave `framework` unset, which every reader defaults to
+                 * `flutter`, so the demo quietly claimed a Flutter pipeline for a Gradle
+                 * app — the exact mismatch `apply` exists to refuse.
+                 *
+                 * It is the most valuable row in the fleet for a buyer with an Android
+                 * app: it shows the product declining to write something that would have
+                 * looked right and failed in CI, and saying what they still get.
+                 */
+                {
+                    id: 'android', archetype: 'android', status: 'pending', confidence: 'high',
+                    framework: 'native',
+                    evidence: ['android/app/build.gradle.kts', 'no pubspec.yaml — this is not a Flutter app'],
+                    config: { applicationId: 'ink.slatepad', tagPrefix: 'v', framework: 'native' },
+                },
                 S('site', 'static-site', ['site/ is an Astro project deployed to Pages'], {
                     pagesProject: 'slatepad-site', publishDir: 'site/dist', prodDomain: 'slatepad.ink',
                 }),

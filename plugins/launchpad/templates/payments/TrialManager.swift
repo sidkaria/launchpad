@@ -7,6 +7,7 @@ import Security
 /// item, separate from the license item. Deleting/reinstalling the `.app` does NOT
 /// remove Keychain items, so a reinstall doesn't reset the trial for a normal user.
 /// A rollback guard (`effectiveNow = max(now, lastSeen)`) stops "set the clock back".
+@MainActor
 final class TrialManager: ObservableObject {
     static let shared = TrialManager()
 
@@ -63,11 +64,7 @@ final class TrialManager: ObservableObject {
     }
 
     private func publish(_ s: Status) {
-        if Thread.isMainThread {
-            status = s
-        } else {
-            DispatchQueue.main.async { self.status = s }
-        }
+        status = s
     }
 
     // MARK: - Keychain (Release-grade persistence)
@@ -78,17 +75,22 @@ final class TrialManager: ObservableObject {
         let value = "\(start)|\(lastSeen)"
         guard let data = value.data(using: .utf8) else { return }
 
-        let query: [String: Any] = [
+        let match: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrAccount as String: trialKey,
-            kSecValueData as String: data,
-            kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlock,
-            kSecAttrSynchronizable as String: false  // Don't sync to iCloud to avoid keychain prompts
         ]
 
-        // Delete existing item, then add the fresh value.
-        SecItemDelete(query as CFDictionary)
-        SecItemAdd(query as CFDictionary, nil)
+        // Update in place; add only when absent. Never delete-then-add: a re-add
+        // rebuilds the item's access list (discarding "Always Allow"), and a delete
+        // whose query carries the value data can fail to match — after which the
+        // add fails as a duplicate, silently, and `lastSeen` stops advancing.
+        let updated = SecItemUpdate(match as CFDictionary, [kSecValueData as String: data] as CFDictionary)
+        guard updated == errSecItemNotFound else { return }
+        var attributes = match
+        attributes[kSecValueData as String] = data
+        attributes[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlock
+        attributes[kSecAttrSynchronizable as String] = false  // Don't sync to iCloud to avoid keychain prompts
+        SecItemAdd(attributes as CFDictionary, nil)
     }
 
     private func load() -> Record? {

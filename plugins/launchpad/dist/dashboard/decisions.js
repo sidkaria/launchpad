@@ -1,3 +1,5 @@
+import { androidFramework } from '../archetypes/android.js';
+import { isGradleFramework } from '../archetypes/androidgradle.js';
 const label = (s) => `${{ 'ios': 'iOS', 'android': 'Android', 'macos-dmg': 'macOS', 'web-app': 'Web', 'static-site': 'Site' }[s.archetype]} · ${s.id}`;
 export function decisionsFor(st) {
     const out = [];
@@ -12,11 +14,13 @@ export function decisionsFor(st) {
             + 'credentials are the ones you already have. This is the decision you did not have to research.',
         source: 'launchpad',
         cost: 'free for public repos; included minutes for private',
+        money: { amount: 0, currency: 'USD', cadence: 'monthly', class: 'launchpads-choice' },
         proposed: ahead,
     });
     out.push({
-        area: 'Secrets',
-        choice: 'Your OS keychain, pushed to GitHub with `launchpad secrets`',
+        // "Your OS keychain" was false on every Windows machine and file vault.
+        area: 'Credentials',
+        choice: 'Your vault (the OS keychain, or an encrypted file), copied to GitHub by `launchpad secrets`',
         why: 'A key committed to git is public the moment the repo is, and deleting it later does not '
             + 'help — it stays in the history. Nothing is ever written into the repository.',
         source: 'launchpad',
@@ -61,6 +65,10 @@ export function decisionsFor(st) {
                 + 'and the expensive one only runs when you ask for it.',
             source: 'launchpad',
             cost: '~$0 vs ~$100/mo',
+            // The number in the ledger is what this decision costs as taken — about
+            // nothing. The ~$100 is the bill it AVOIDS, and adding an avoided cost to
+            // a total would be the ledger charging for a decision that saved money.
+            money: { amount: 0, currency: 'USD', cadence: 'monthly', class: 'launchpads-choice' },
         });
     }
     // Every surface, not only the wired ones. The reasoning for a surface
@@ -101,6 +109,9 @@ export function decisionsFor(st) {
                             + 'throwaway keychain per run, because a launchd-managed runner cannot reach the login keychain.'
                         : 'GitHub\'s hosted macOS runners. A spare Mac as a self-hosted runner would take this to $0.',
                     cost: c.runsOn === 'self-hosted' ? '$0, unmetered' : 'billed per minute at the macOS rate',
+                    money: c.runsOn === 'self-hosted'
+                        ? { amount: 0, currency: 'USD', cadence: 'monthly', class: 'launchpads-choice' }
+                        : { amount: null, currency: 'USD', cadence: 'per-minute', class: 'launchpads-choice' },
                 });
             }
             if (c.flutterVersion) {
@@ -123,6 +134,50 @@ export function decisionsFor(st) {
         }
         if (s.archetype === 'android') {
             const c = (s.config ?? {});
+            const framework = androidFramework(c, s);
+            if (isGradleFramework(framework)) {
+                out.push({
+                    area: a, source: 'launchpad',
+                    choice: 'Gradle on Linux: Temurin JDK 17, `setup-gradle` for caching and wrapper checks',
+                    why: 'Every Android Gradle Plugin from 8.0 to today names JDK 17 as its minimum, so that is '
+                        + 'the floor rather than whatever the runner happens to ship — a toolchain that floats is '
+                        + 'a build that breaks on a day you changed nothing. `gradle/actions/setup-gradle` '
+                        + 'supersedes the archived build-action, caches the Gradle home by default, and validates '
+                        + 'every wrapper JAR\'s checksum on each run, which is why there is no separate '
+                        + 'wrapper-validation step to maintain.',
+                    cost: 'free — Linux runners are free on public repos and the cheapest tier on private ones',
+                });
+                out.push({
+                    area: a, source: 'launchpad',
+                    choice: 'Both artifacts every build: the APK for testers, the AAB for Play',
+                    why: 'Play requires an App Bundle from every new app, and Firebase App Distribution can only '
+                        + 'take an AAB once the app is already published in Play and linked to it — which a '
+                        + 'pre-launch app sending builds to testers is not. Building only one of the two would be '
+                        + 'a pipeline that works for everybody except the person who needs it first. The AAB is '
+                        + 'kept on the run, so the day the Play account is ready it is already there.',
+                });
+                out.push({
+                    area: a, source: 'launchpad',
+                    choice: 'A version code from the commit count, passed in by CI',
+                    why: 'Play rejects an upload whose version code is not higher than the last, and testers '
+                        + 'reading "version 1" on every build learn to ignore it. The number is the commit count, '
+                        + 'so it climbs on its own and a re-run of the same commit produces the same value. Your '
+                        + 'own version code stays in the file and stays authoritative everywhere except CI.',
+                });
+            }
+            if (framework === 'expo') {
+                out.push({
+                    area: a, source: 'launchpad',
+                    choice: '`expo prebuild --clean` on GitHub Actions, not EAS Build',
+                    why: 'EAS is Expo\'s own service and it is good, but it needs an Expo account and an access '
+                        + 'token before a single build can run, and its free tier is a monthly cliff that turns '
+                        + 'into a subscription exactly when the project starts working. Prebuild in CI runs on the '
+                        + 'GitHub account you already have. `--clean` is what makes it reliable: Expo warns that an '
+                        + 'incremental prebuild layers changes and may not reproduce, and a fresh runner has '
+                        + 'nothing to layer onto. EAS stays available if you ever want it.',
+                    cost: 'free — versus an Expo plan once the free build quota runs out',
+                });
+            }
             out.push({
                 area: a, source: 'launchpad',
                 choice: 'Release signing with a real keystore, injected in CI',
@@ -141,6 +196,10 @@ export function decisionsFor(st) {
                         + 'testers opted in continuously for 14 days, plus identity verification. The fee is not '
                         + 'the barrier; the fortnight is, which is the real reason to start here.',
                     cost: 'free (Play: $25 one-time, after a 14-day testing gate)',
+                    // Zero, because this decision is Firebase. Play's fee and its 14-day
+                    // gate are a separate question with a separate answer, and they
+                    // surface as their own store-gate item in `needs.ts`.
+                    money: { amount: 0, currency: 'USD', cadence: 'monthly', class: 'launchpads-choice' },
                 });
             }
             if (c.distributeOn?.includes('schedule')) {
@@ -168,6 +227,7 @@ export function decisionsFor(st) {
                         + 'is generated per app — whoever holds it can sign updates for that app, so it is never '
                         + 'shared between two of yours.',
                     cost: 'R2 storage, effectively $0',
+                    money: { amount: 0, currency: 'USD', cadence: 'monthly', class: 'launchpads-choice' },
                 });
             }
         }
@@ -183,6 +243,14 @@ export function decisionsFor(st) {
                 // covers it was advising a terms violation on the way to their first sale.
                 cost: 'Hobby (free) while there is nothing to buy; Pro at $20/seat/mo once you charge — '
                     + 'Hobby is licensed for non-commercial use only',
+                // The number is $20, and it is conditional. `onlyWhen` is what stops a
+                // fleet ledger charging $20/month for a side project with no checkout —
+                // and what lets `needs.ts` raise the same $20 as a decision to make the
+                // moment a paywall appears in the repo, quoting this chip's own figure.
+                money: {
+                    amount: 20, currency: 'USD', cadence: 'monthly', class: 'unavoidable',
+                    onlyWhen: 'once you charge for it — Hobby is licensed for non-commercial use only',
+                },
             });
             out.push({
                 area: a, source: 'launchpad',
@@ -202,6 +270,7 @@ export function decisionsFor(st) {
                     + 'Pages refuses any single file over 25 MiB and the limit cannot be raised, so a DMG in '
                     + 'the published directory fails the deploy. Artifacts go to R2 and the page links to them.',
                 cost: 'free',
+                money: { amount: 0, currency: 'USD', cadence: 'monthly', class: 'launchpads-choice' },
             });
         }
     }

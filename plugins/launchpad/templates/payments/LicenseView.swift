@@ -84,6 +84,8 @@ struct LicenseView: View {
         .padding(.horizontal, 32)
         .frame(width: 460, height: 470)
         .background(bg)
+        // A rejected key is kept, not deleted — so a retry is one click.
+        .onAppear { if licenseKey.isEmpty { licenseKey = licenseManager.storedKey ?? "" } }
     }
 
     private func activateLicense() {

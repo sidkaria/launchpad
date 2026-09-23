@@ -31,8 +31,22 @@ jobs:
           [ -n "$XC" ] && sudo xcode-select -s "$XC/Contents/Developer" || true
           xcodebuild -version
 
-      - name: Install Sparkle
-        run: brew install sparkle
+      # Sparkle's own signed tools tarball, pinned — never the Homebrew cask.
+      # Homebrew disabled the `sparkle` cask on 2026-09-01 (it fails Gatekeeper),
+      # and from that morning every release built on it died before signing a
+      # single byte. A package manager is not a pinned dependency: it can remove
+      # the thing you depend on overnight, and a release lane is where you find out.
+      - name: Install Sparkle tools
+        run: |
+          SPARKLE_VERSION={{SPARKLE_TOOLS_VERSION}}
+          curl -fsSL -o "$RUNNER_TEMP/sparkle.tar.xz" \
+            "https://github.com/sparkle-project/Sparkle/releases/download/${SPARKLE_VERSION}/Sparkle-${SPARKLE_VERSION}.tar.xz"
+          mkdir -p "$RUNNER_TEMP/sparkle-tools"
+          tar -xf "$RUNNER_TEMP/sparkle.tar.xz" -C "$RUNNER_TEMP/sparkle-tools"
+          GEN="$(find "$RUNNER_TEMP/sparkle-tools" -name generate_appcast -type f | head -1)"
+          test -n "$GEN" || { echo "::error::generate_appcast not found in the Sparkle ${SPARKLE_VERSION} tarball"; exit 1; }
+          echo "SPARKLE_BIN=$(dirname "$GEN")" >> "$GITHUB_ENV"
+          echo "Sparkle tools ready: $GEN"
 
       - name: Ensure AWS CLI
         run: which aws || brew install awscli
@@ -86,7 +100,10 @@ jobs:
           mkdir -p updates
           mv "{{APP_NAME}}-${VERSION}.dmg" updates/
           # Pull existing archives so the regenerated appcast keeps full version history.
-          aws s3 sync "s3://{{R2_BUCKET}}" updates/ --endpoint-url "$ENDPOINT" --exclude "appcast.xml" || true
+          # The `-latest.dmg` alias stays up there: it is a copy of a versioned DMG, and
+          # generate_appcast must never see the same build twice.
+          aws s3 sync "s3://{{R2_BUCKET}}" updates/ --endpoint-url "$ENDPOINT" \
+            --exclude "appcast.xml" --exclude "{{APP_NAME}}-latest.dmg" || true
 
           # Notes are written AFTER that sync, deliberately. The sync pulls the whole bucket
           # down to rebuild the appcast with full history — including any
@@ -106,20 +123,31 @@ jobs:
           {
             echo "<h2>{{APP_NAME}} ${VERSION}</h2>"
             echo "<ul>"
-            # Trailers are for the repo, not for your users.
+            # Trailers are for the repo, not for your users. Each line is HTML-escaped:
+            # the notes are an HTML page Sparkle renders, so a `<` or `&` in a tag message
+            # (an email in angle brackets, "Fix A & B") was markup, not text.
             git tag -l --format='%(contents)' "{{TAG_PREFIX}}${VERSION}" \
               | grep -vE '^(Co-Authored-By|Signed-off-by|Co-authored-by):' \
+              | sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g' \
               | while IFS= read -r line; do
                   if [ -n "$line" ]; then echo "<li>${line}</li>"; fi
                 done
             echo "</ul>"
           } > "$NOTES"
-          echo "$SPARKLE_PRIVATE_KEY" > sparkle_key.pem
-          GENERATE_APPCAST=$(brew list sparkle | grep 'bin/generate_appcast$' | head -1)
-          "$GENERATE_APPCAST" updates/ --ed-key-file sparkle_key.pem --download-url-prefix "https://{{APPCAST_DOMAIN}}/"
-          rm sparkle_key.pem
+          # The EdDSA key goes in on STDIN (`--ed-key-file -`), never through a file:
+          # the file form is newline-sensitive and fails with "Private key not found in
+          # the argument" on a key that is perfectly valid.
+          echo "$SPARKLE_PRIVATE_KEY" | "$SPARKLE_BIN/generate_appcast" updates/ \
+            --ed-key-file - --download-url-prefix "https://{{APPCAST_DOMAIN}}/"
           aws s3 sync updates/ "s3://{{R2_BUCKET}}" --endpoint-url "$ENDPOINT"
-          echo "Appcast live: https://{{APPCAST_DOMAIN}}/appcast.xml"
+          # A stable name for "the newest DMG", so a download link works without
+          # JavaScript, without CORS and without being edited on every release. Both
+          # alternatives were tried in the field: `href="#"` is a dead button whenever
+          # the appcast fetch fails, and a version-pinned href goes stale by the next
+          # release. `no-cache` so the edge never serves last week's build under it.
+          aws s3 cp "updates/{{APP_NAME}}-${VERSION}.dmg" "s3://{{R2_BUCKET}}/{{APP_NAME}}-latest.dmg" \
+            --endpoint-url "$ENDPOINT" --cache-control "no-cache" --content-type "application/x-apple-diskimage"
+          echo "Appcast: https://{{APPCAST_DOMAIN}}/appcast.xml"
 
       - name: GitHub Release (backup copy)
         uses: softprops/action-gh-release@v1
@@ -127,3 +155,25 @@ jobs:
           files: updates/{{APP_NAME}}-${{ steps.v.outputs.VERSION }}.dmg
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # An upload is not a release users have. Existing installs only ever see
+      # what the public feed URL serves, so read it back from where they read it:
+      # an unbound custom domain, a wrong bucket or a stale edge all pass every
+      # step above and fail here, which is where they should fail.
+      - name: Verify the live appcast offers this version
+        env:
+          VERSION: ${{ steps.v.outputs.VERSION }}
+        run: |
+          DMG="$(printf '%s' "{{APP_NAME}}-${VERSION}.dmg" | sed 's/ /%20/g')"
+          for attempt in 1 2 3 4 5 6; do
+            if curl -fsSL "https://{{APPCAST_DOMAIN}}/appcast.xml?cb=$(date +%s)" | grep -qF "$DMG"; then
+              echo "Live: https://{{APPCAST_DOMAIN}}/appcast.xml offers ${VERSION}"
+              curl -fsSI "https://{{APPCAST_DOMAIN}}/$(printf '%s' "{{APP_NAME}}-latest.dmg" | sed 's/ /%20/g')" >/dev/null \
+                || { echo "::error::the -latest.dmg alias is not being served"; exit 1; }
+              exit 0
+            fi
+            sleep 10
+          done
+          echo "::error::https://{{APPCAST_DOMAIN}}/appcast.xml does not offer ${VERSION} — existing installs will not" \
+               "update. Check the bucket's custom domain is bound and serving."
+          exit 1

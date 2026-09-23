@@ -4,12 +4,16 @@ import { join } from 'node:path';
 import { fleet, labelOf } from '../registry.js';
 import { readState } from '../state.js';
 import { requiredVaultKeys } from '../secrets.js';
-import { makeVault, detectBackend } from '../vault.js';
+import { makeVault, detectBackend, backendLabel } from '../vault.js';
+import { cliInvocation } from '../invocation.js';
 import { readBacklog, readInbox, nextTask, summarize } from '../nightshift/backlog.js';
 import { readConfig, readiness } from '../nightshift/config.js';
 import { readRunState, liveness, describePhase } from '../nightshift/runstate.js';
 import { readGroomMemory, needsDecision } from '../nightshift/groomstate.js';
 import { decisionsFor } from './decisions.js';
+import { fleetNeeds, projectNeeds } from '../needs.js';
+import { readConfirmations, recordedAnswers } from '../confirmations.js';
+import { ledgerFor } from '../needs.js';
 import { detectAssets } from '../assets.js';
 import { latestTag, headCommit } from '../git.js';
 import { hueOf } from './icon.js';
@@ -139,6 +143,7 @@ export function lastNightOf(repo) {
     }
 }
 export function dashboardData(home = homedir(), now = new Date()) {
+    const states = new Map();
     const projects = fleet(home).map(entry => {
         // A directory that is gone cannot be read for anything else, and probing it
         // would turn one bad row into a broken page.
@@ -148,10 +153,12 @@ export function dashboardData(home = homedir(), now = new Date()) {
                 surfaces_detail: [], pipelines: [], decisions: [], secrets: [],
                 accent: hueOf(labelOf(entry)), live: [],
                 assets: { screenshots: 0, featureGraphic: false },
+                ledger: ledgerFor([], []), answered: [],
             };
         }
         const night = lastNightOf(entry.path);
         const st = readState(entry.path);
+        states.set(entry.path, st);
         return {
             ...entry,
             accent: hueOf(labelOf(entry)),
@@ -167,10 +174,47 @@ export function dashboardData(home = homedir(), now = new Date()) {
             nightshift: nightshiftView(entry.path),
             lastNight: night.results,
             lastNightDate: night.date,
+            ledger: ledgerFor([], []),
+            answered: safeAnswers(entry.path),
         };
     });
+    /**
+     * The needs list is computed over the ASSEMBLED fleet, not per project.
+     *
+     * It has to be: the merge that turns six projects wanting one App Store
+     * Connect key into a single item is a fact about the fleet, and it cannot be
+     * made by a function that has only ever seen one project.
+     */
+    const needsInput = projects
+        .filter(p => !p.problem)
+        .map(p => ({
+        path: p.path,
+        label: labelOf(p),
+        state: states.get(p.path) ?? null,
+        score: p.score,
+        secrets: p.secrets,
+        live: p.live,
+        decisions: p.decisions,
+        answered: safeConfirmations(p.path),
+    }));
+    const { items: needs, ledger } = fleetNeeds(needsInput);
+    for (const p of projects) {
+        const mine = needsInput.find(n => n.path === p.path);
+        if (!mine)
+            continue;
+        p.ledger = ledgerFor([mine], projectNeeds(needs, p.path));
+    }
     const scored = projects.filter(p => p.score);
+    let backend = 'file';
+    try {
+        backend = detectBackend(process.platform);
+    }
+    catch { /* reported by the CLI; the page shows the file vault */ }
     return {
+        needs,
+        ledger,
+        invocation: cliInvocation(),
+        vault: { backend, label: backendLabel(backend), keychain: backend === 'keychain' || backend === 'secret-service' },
         contract: CONTRACT,
         // Named rather than inferred from whether the arrays are empty: "no
         // marketing data" and "this build has no marketing" are different answers,
@@ -200,6 +244,7 @@ export function dashboardData(home = homedir(), now = new Date()) {
             tasksReady: projects.reduce((n, p) => n + p.nightshift.counts.ready, 0),
             tasksBlocked: projects.reduce((n, p) => n + p.nightshift.counts.blocked, 0),
             inbox: projects.reduce((n, p) => n + p.nightshift.inbox.length, 0),
+            needsYou: needs.length,
         },
         lastNight: machineReport(home),
     };
@@ -295,7 +340,13 @@ export function liveTargets(repo, st) {
                 onTag('TestFlight');
                 break;
             case 'android':
-                onTag(c.firebaseAppId ? `Firebase → ${c.testerGroup || 'testers'}` : 'Play internal track');
+                // Every Android pipeline launchpad writes distributes through Firebase
+                // App Distribution; none of them uploads to Play. The fallback used to
+                // read "Play internal track" — a channel no generated file can reach,
+                // quoted back in the "needs you" strip as "nothing has gone out on Play
+                // internal track yet" beside the card explaining why launchpad starts
+                // with Firebase instead.
+                onTag(`Firebase → ${c.testerGroup || 'testers'}`);
                 break;
             case 'macos-dmg':
                 onTag(c.appcastDomain ? `DMG · ${c.appcastDomain}` : 'DMG · direct download');
@@ -309,6 +360,28 @@ export function liveTargets(repo, st) {
         }
     }
     return out;
+}
+/**
+ * Both readers of `.launchpad/confirmed.yml`, wrapped so a hand-edited or
+ * unreadable file costs one row's worth of answers rather than the whole page.
+ * `readConfirmations` already degrades to `{}` on a parse error; this covers the
+ * cases it cannot, such as a directory that became unreadable mid-request.
+ */
+function safeConfirmations(repo) {
+    try {
+        return readConfirmations(repo);
+    }
+    catch {
+        return {};
+    }
+}
+function safeAnswers(repo) {
+    try {
+        return recordedAnswers(repo);
+    }
+    catch {
+        return [];
+    }
 }
 function emptyNightshift() {
     return {

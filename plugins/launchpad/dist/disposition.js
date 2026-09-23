@@ -56,8 +56,17 @@ export function pipelineScope(p) {
     let dir = dirname(path);
     if (/(^|\/)fastlane$/.test(dir))
         dir = dirname(dir); // …/fastlane/Fastfile
-    if (/(^|\/)android$/.test(dir))
-        dir = dirname(dir); // …/android/fastlane/Fastfile
+    // …/android/fastlane/Fastfile and …/ios/fastlane/Fastfile are both statements
+    // about the app ABOVE the platform directory, not about the platform
+    // directory. `android` has been stripped since Flutter; `ios` matters now
+    // that React Native and Expo are wired, because their fastlane lanes live in
+    // `ios/` — which is where their own template puts them, and where every real
+    // RN repo that already has lanes keeps them. Without this an existing
+    // `ios/fastlane/Fastfile` marked `leave-alone` is scoped to `…/ios`, the
+    // surface is scoped to the app, the two never match, and `apply` cheerfully
+    // writes a second pipeline beside the one the user said not to touch.
+    if (/(^|\/)(android|ios)$/.test(dir))
+        dir = dirname(dir);
     return dir === '' || dir === '.' ? '.' : dir;
 }
 /** Where a surface lives, in the same terms. */

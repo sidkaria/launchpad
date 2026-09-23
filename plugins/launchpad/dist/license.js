@@ -148,6 +148,20 @@ export function entitlement(rec, now, staleAfterDays = STALE_AFTER_DAYS) {
     };
 }
 /**
+ * Entitlement as the one word a person reads — in `license`, in `report`,
+ * wherever it is said.
+ *
+ * `stale` is an internal name for "validated once, not re-checked lately", and
+ * it is fully licensed. It used to be printed as `stale` by `license` (which
+ * reads like a fault) and as `grace` by `report` (which is the name of the
+ * decaying state rule 3 above abolished — a word that promises an expiry this
+ * product does not have). One key, two words, both wrong. It is `licensed`,
+ * and the line under it says when it was last confirmed.
+ */
+export function licenceWord(state) {
+    return state === 'stale' ? 'licensed' : state;
+}
+/**
  * Entitled to run the licensed verbs?
  *
  * `stale` counts, unconditionally and forever. The only false here is a key the
@@ -190,15 +204,49 @@ export async function activate(key, fetcher, now = new Date(), instanceName = ho
             // Cannot reach the provider. Refusing to store the key would strand
             // someone who just paid and happens to be offline, so this is reported
             // and retried rather than treated as a bad key.
-            : { ok: false, message: `Could not reach ${provider.label} (${v.why}). Try again when online.` };
+            : { ok: false, message: unreachableMessage(provider.label, v.why) };
     }
     const r = await provider.activate(trimmed, instanceName, fetcher);
-    if (r.status === 'unreachable') {
-        return { ok: false, message: `Could not reach ${provider.label} (${r.why}). Try again when online.` };
-    }
+    if (r.status === 'unreachable')
+        return { ok: false, message: unreachableMessage(provider.label, r.why) };
     if (r.status === 'refused')
         return { ok: false, message: r.why };
     return { ok: true, message: `Activated on ${instanceName}.`, record: stored(r.instanceId) };
+}
+/**
+ * Why a licence server did not answer, in words rather than in Node.
+ *
+ * The raw reasons are a runtime's: `fetch failed`, `This operation was
+ * aborted`, `Unexpected token '<', "<html><bod"... is not valid JSON`. A buyer
+ * activating a key they just paid for read the last one verbatim during a
+ * provider outage. What they need is which of three things happened — no
+ * network, no answer in time, or an answer that was not the licence server's —
+ * because each has a different next step.
+ */
+export function humanReason(why) {
+    if (/aborted|abort|timed? ?out|timeout/i.test(why))
+        return 'no answer in time';
+    if (/fetch failed|ECONNREFUSED|ENOTFOUND|EAI_AGAIN|ENETUNREACH|EHOSTUNREACH|socket|network/i.test(why)) {
+        return 'no connection';
+    }
+    if (/JSON|Unexpected token|unrecognised response/i.test(why)) {
+        return 'what answered was not the licence server (usually a captive portal or a proxy)';
+    }
+    const http = /HTTP (\d{3})/.exec(why);
+    if (http) {
+        const code = Number(http[1]);
+        if (code === 429)
+            return 'it is rate-limiting requests right now';
+        if (code >= 500)
+            return `it is having an outage (HTTP ${code})`;
+        return `HTTP ${code}`;
+    }
+    return why;
+}
+/** The one sentence for "we could not ask", so activate and deactivate say it the same way. */
+export function unreachableMessage(label, why) {
+    return `Could not reach ${label} — ${humanReason(why)}. Nothing was used up and nothing changed; `
+        + 'try again in a minute.';
 }
 /**
  * Re-check a stored key.
@@ -318,7 +366,7 @@ export async function deactivate(rec, fetcher, provider = providerForRecord(rec)
         return { ok: true, message: 'Released this machine. The seat is free for another.' };
     return r.status === 'refused'
         ? { ok: false, message: r.why }
-        : { ok: false, message: `Could not reach ${provider.label} (${r.why}).` };
+        : { ok: false, message: unreachableMessage(provider.label, r.why) };
 }
 /** Node's global fetch, adapted. Kept separate so every test injects its own. */
 export const realFetcher = async (url, init) => {
@@ -339,19 +387,27 @@ export const realFetcher = async (url, init) => {
  */
 export function refusal(verb, e, checkoutUrl, supportUrl, providerName = 'The licence provider', price) {
     if (e.state === 'lapsed') {
+        /**
+         * No checkout link here, deliberately (and a test holds it): someone whose
+         * key is rejected has usually paid.
+         *
+         * The blank lines are kept on purpose: this used to `filter` every empty
+         * string out to drop an absent support URL, and took the paragraph breaks
+         * with it, so the most stressful message in the product was one wall.
+         */
         return [
             `launchpad: ${providerName} is rejecting this licence key, so \`${verb}\` cannot run.`,
             `  ${e.why}`,
             '',
             '  If you bought this, that is a mistake on our side or a payment that needs',
             '  attention — not something you should have to debug.',
-            supportUrl ? `  Tell us and it gets fixed: ${supportUrl}` : '',
+            ...(supportUrl ? [`  Tell us and it gets fixed: ${supportUrl}`] : []),
             '',
             '  Everything that reads your own projects keeps working regardless:',
             '    /launchpad:status      the readiness scorecard',
             '    /launchpad:doctor      which credentials are missing',
             '    /launchpad:dashboard   all of it, on one screen',
-        ].filter(l => l !== '').join('\n');
+        ].join('\n');
     }
     return [
         `launchpad: \`${verb}\` needs a licence.`,
@@ -368,6 +424,6 @@ export function refusal(verb, e, checkoutUrl, supportUrl, providerName = 'The li
         price
             ? `  To wire the pipelines: ${checkoutUrl}  (${price}, once — all 1.x updates included)`
             : `  To wire the pipelines: ${checkoutUrl}`,
-        '  Then: /launchpad:license, and activate the key you were sent.',
+        '  Then: /launchpad:license, and paste the key from your receipt email.',
     ].join('\n');
 }

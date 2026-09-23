@@ -42,18 +42,36 @@ on.
 
 ## What it works on
 
-launchpad ships real pipelines for five kinds of surface:
+<!-- launchpad:platforms:start — generated from plugins/launchpad/src/platforms.ts; `npm run readme` rewrites it -->
+launchpad ships real pipelines for five kinds of surface — iOS app, Android app, macOS app (DMG), Web app, Static site — built
+with any of these:
 
-| Surface | What gets wired |
-|---|---|
-| **iOS app** | build, signing, TestFlight / App Store |
-| **Android app** | release signing, keystore handling, Play or Firebase App Distribution |
-| **macOS app (DMG)** | signing, notarization, DMG, Sparkle auto-update, hosted downloads |
-| **Web app** | Vercel deploys, preview per branch, per-app ignored build steps |
-| **Static site** | Cloudflare Pages, custom domain, previews |
+| Built with | Surface | Where it ships |
+|---|---|---|
+| Flutter | iOS app + Android app | TestFlight and the App Store for iOS; Firebase App Distribution for Android (a Play upload is not wired — the release build is yours to upload). |
+| Swift / Xcode (iOS) | iOS app | TestFlight on a push to your test branch, the App Store on a tag. |
+| Swift / Xcode (macOS) | macOS app (DMG) | A signed, notarized, stapled DMG on your own download URL, with Sparkle in-app auto-update. |
+| Next.js, Nuxt, SvelteKit, Astro, Remix, Angular, Qwik, SolidStart, Gatsby, Docusaurus, Vite, Create React App | Web app | Vercel |
+| Hugo, Jekyll, Eleventy, MkDocs, Zola, Hand-written HTML | Static site | Cloudflare Pages |
+| Android (Kotlin / Java) | Android app | Firebase App Distribution on a push, and the AAB Play wants kept on every build.<br>*Distribution needs a Firebase service account and an upload keystore. Without them the build still runs and still passes — the steps that need a credential say they were skipped rather than failing.* |
+| React Native | iOS app + Android app | TestFlight and the App Store for iOS; Firebase App Distribution for Android.<br>*The Android lane has been run end to end against a real app. The iOS lane is generated and reviewed but has not been executed — that needs a macOS runner and an Apple Developer account.* |
+| Expo | iOS app + Android app | TestFlight and the App Store for iOS; Firebase App Distribution for Android.<br>*This is the prebuild route, not EAS Build: no Expo account, no build quota, no third-party bill. EAS remains available to anyone who wants it, and launchpad does not set it up. Two limits said plainly: the iOS lane has not been run (that needs a macOS runner and an Apple Developer account), and if your `android/` is generated rather than committed, launchpad cannot wire release signing into it — prebuild would overwrite it — so that last step is a config plugin you add, or you commit `android/` and launchpad does it.* |
+
+**Recognised, with no pipeline** — named, scored in its own terms, on the dashboard, and told plainly that
+there is nothing for `apply` to write: Tauri desktop app, Electron desktop app, Swift package, Ruby on Rails app, Django app, Python web service, Laravel app, Phoenix app, Elixir project, Rust project, Go project, Python package, Ruby gem, .NET project, JVM project, Node CLI, Node package, Containerised service.
+<!-- launchpad:platforms:end -->
 
 A repo can be several of these at once; monorepos are detected surface by
-surface.
+surface. Every pipeline is a **GitHub Actions** workflow, so the repository has
+to be on GitHub for it to run (a mirror is enough) — launchpad says so when it
+finds a GitLab or Bitbucket remote, and the scorecard and dashboard work
+either way. Android distribution is **Firebase App Distribution**; the release
+build Play wants is produced and kept, and uploading it to Play is yours.
+
+Expo builds on **your** GitHub Actions, with `npx expo prebuild --clean` — no
+Expo account, no access token, and no monthly build quota. EAS Build is a fine
+service and remains available to you; launchpad does not set it up, and does not
+make you sign up for anything to ship.
 
 **If your project is none of them** — a Rust CLI, a Django service, a Go
 daemon — launchpad says so plainly instead of pretending. There is no pipeline
@@ -76,10 +94,22 @@ before you buy.
 
 ## Install
 
+Inside Claude Code:
+
 ```
 /plugin marketplace add sidkaria/launchpad
 /plugin install launchpad@launchpad
 ```
+
+Or from a terminal, the same two steps:
+
+```
+claude plugin marketplace add sidkaria/launchpad
+claude plugin install launchpad@launchpad
+```
+
+Installing costs nothing and asks for nothing. Restart Claude Code (or start a
+new session) and the `/launchpad:` commands are there.
 
 ## First command
 
@@ -91,6 +121,9 @@ Open Claude Code in the repo you want to ship, and run:
 
 It detects what the repo is, scores it, and walks you through what is missing.
 Nothing is written to your repo before it tells you what it is about to write.
+Run it from anywhere inside the repository — a subdirectory of a monorepo is
+fine; launchpad works on the whole repository, because that is where GitHub
+looks for workflows.
 
 If you would rather just look first:
 
@@ -102,12 +135,15 @@ That prints the scorecard and changes nothing.
 
 You talk to launchpad through Claude — the slash commands above, or just asking
 ("what's between this app and the App Store?"). There is no `launchpad` command
-to install on your PATH.
+to install on your PATH. The one thing it asks you to type yourself — storing a
+credential, so the value never passes through a chat — comes with the full
+command to paste.
 
 ## What costs money
 
-**The scorecard is free, permanently, in every copy.** So are the doctor, the
-status view, the dashboard and detection. Reading the truth about your own
+**The scorecard is free, permanently, in every copy.** So are setup, the
+doctor, the status view, the "needs you" list, the dashboard, detection and the
+support report. Reading the truth about your own
 project should not be behind a paywall — and if the list of what is missing is
 not useful to you on its own, you should not buy the rest.
 
@@ -123,8 +159,11 @@ discounted for owners.** There is no expiry and nothing to renew.
 /launchpad:license
 ```
 
-shows what is on this machine and where to buy a key; activating takes one
-command after that. A key that has validated once **keeps working offline** — if
+shows what is on this machine and where to buy a key. Activating is one step:
+give Claude the key from your receipt email ("activate my launchpad key …"), and
+it runs `license <key>`. Running it twice on the same machine does not use a
+second of the key's five activations; `license deactivate` frees one when you
+move to a new machine. A key that has validated once **keeps working offline** — if
 launchpad cannot reach the licence server, that is our problem and it will not
 become yours.
 
@@ -182,8 +221,21 @@ not on the app you are about to ship:
   Checked in on purpose: it travels with the code and is reviewable in a diff.
 - A marked block in your `CLAUDE.md`, appended between markers. Anything you
   wrote by hand is preserved byte for byte.
+- `.github/workflows/launchpad-*.yml` — the pipelines, and nothing else under
+  `.github/`.
+- For a mobile app, `apply` also edits the build files a pipeline cannot work
+  without, and prints every one it touches: the release signing config in
+  `build.gradle`, the `fastlane/` directory, and for a Flutter app its dev/prod
+  flavours (the Xcode project and schemes, `Info.plist`, the `Podfile`,
+  `AndroidManifest.xml`, and a DEV-badged `AppIcon-dev` icon set copied from
+  your `AppIcon` — only ever created, never overwritten). A file you edited by hand is kept and reported, never
+  overwritten.
+- `~/.launchpad/projects.json` — the list of projects on your dashboard; paths
+  only.
 - `~/.launchpad/license.json` — your licence key.
-- Your OS keychain — credentials. Never the repo, never a dotfile.
+- Your OS keychain — credentials — or, where there is no keychain launchpad can
+  use (Windows, a container), an encrypted file, `~/.launchpad/vault.json`. Never
+  the repo, never a `.env`.
   Set `LAUNCHPAD_VAULT_BACKEND=file` (with `LAUNCHPAD_VAULT_PASSPHRASE`) where
   the keychain is unreachable or should not be touched — a CI runner under
   launchd, a container, a machine you share. An unknown value is an error, not

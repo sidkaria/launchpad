@@ -8,29 +8,30 @@ import {
   ANDROID_DEFAULT_DISTRIBUTE_ON, ANDROID_DEFAULT_RUNNER, flutterSetupStep, type DistributeTrigger,
 } from './triggers.js';
 import { codegenWorkflowStep } from './mobilevalidate.js';
+import { isGradleFramework, planGradleAndroidFiles, resolveGradleConfig } from './androidgradle.js';
 import { writeGuarded, type WriteResult } from '../generated.js';
 import type { Surface, SurfaceFramework } from '../types.js';
 
 export type AndroidFramework = SurfaceFramework;
 
 /**
- * Frameworks detection recognises but `apply` cannot yet build — the exact
- * counterpart to `ios.ts`'s `UNSUPPORTED_FRAMEWORKS`, and for the same reason.
+ * Frameworks detection recognises and `apply` cannot build — the counterpart to
+ * `ios.ts`'s `UNSUPPORTED_FRAMEWORKS`.
  *
- * Every file this module writes assumes Flutter: the Fastfile's build step is
- * `flutter build apk --release`, and the artifact it uploads to Firebase is
- * `build/app/outputs/flutter-apk/app-release.apk`. Handed a native Gradle app,
- * that workflow is syntactically perfect, runs, and fails on the first line of
- * the build — after the runner has been paid for. A React Native or Expo app
- * fails the same way for its own reasons (a Metro bundle step, `expo prebuild`).
+ * **Empty, and that is the point.** It held `native`, `react-native` and `expo`
+ * because every file this module writes assumes Flutter: the Fastfile's build
+ * step is `flutter build apk --release` and the artifact it uploads is
+ * `build/app/outputs/flutter-apk/app-release.apk`. Handed a native Gradle app
+ * that workflow was syntactically perfect, ran, and died on the first line of
+ * the build — after the runner had been paid for — so refusing was the honest
+ * behaviour while nothing else existed.
  *
- * iOS has refused this case since it could detect it. Android could not, because
- * it had nothing to refuse ON: there was no framework anywhere in the Android
- * config, so the branch in `apply` wrote the Flutter workflow for anything at
- * all. That is the gap this closes. Building the native Gradle pipeline is a
- * separate piece of work; until it exists, saying so is the honest behaviour.
+ * Something else exists now: `androidgradle.ts` builds all three with
+ * `./gradlew`. The list stays rather than being deleted because it is the seam
+ * the refusal hangs on, and the next framework detection learns to name will
+ * need it again before its pipeline is written.
  */
-export const ANDROID_UNSUPPORTED_FRAMEWORKS = ['native', 'react-native', 'expo'] as const;
+export const ANDROID_UNSUPPORTED_FRAMEWORKS = [] as const;
 
 /**
  * The framework for this surface, defaulting to Flutter.
@@ -51,22 +52,26 @@ export function androidIsWireable(framework: string): boolean {
 /**
  * What to tell someone whose Android app launchpad will not wire.
  *
- * Mirrors the iOS refusal deliberately — name what was found, say plainly that
- * the pipeline does not exist yet, and then say what they still get, because
- * most of the value is in the half that does work and a bare "skipped" throws
- * that away. The keystore line is here rather than in the scorecard's voice
- * because this is the moment the reader is thinking about Android releases, and
- * losing the upload keystore is the one mistake on the whole list that cannot
- * be undone.
+ * Nothing reaches this today — `ANDROID_UNSUPPORTED_FRAMEWORKS` is empty — and
+ * it is kept beside the gate rather than deleted with it, because the refusal
+ * and the list that triggers it are one mechanism. Deleting the words is how
+ * the NEXT framework detection learns to name gets a Flutter workflow written
+ * for it instead of a sentence.
+ *
+ * Mirrors the iOS refusal deliberately: name what was found, say plainly that
+ * the pipeline does not exist, then say what they still get, because most of
+ * the value is in the half that does work and a bare "skipped" throws it away.
  */
 export function androidRefusal(surfaceId: string, framework: AndroidFramework): string[] {
   const what = framework === 'native'
     ? 'a native Gradle app (no Flutter)'
-    : `${framework === 'expo' ? 'an Expo' : 'a React Native'} app`;
+    : framework === 'expo' ? 'an Expo app'
+      : framework === 'react-native' ? 'a React Native app'
+        : `a ${framework} app`;
   return [
-    `  ! ${surfaceId}: this is ${what}, and launchpad's Android pipeline builds with`,
-    '      `flutter build apk`. Wiring it would write a workflow that looks right and',
-    '      fails on its first build step, so it is refused rather than written.',
+    `  ! ${surfaceId}: this is ${what}, and launchpad has no Android pipeline that`,
+    '      builds it. Wiring it would write a workflow that looks right and fails on',
+    '      its first build step, so it is refused rather than written.',
     '      You still get, free and today: the readiness scorecard in Android\'s terms,',
     '      the release-signing and upload-keystore guidance (losing that keystore means',
     '      the app can never be updated again), the checklist and the dashboard.',
@@ -115,6 +120,42 @@ export interface AndroidConfig {
   flutterVersion?: string;
   // validate-only: extra `flutter test` args (see MobileValidateConfig.testArgs).
   testArgs?: string;
+
+  // ── The Gradle path (framework `native`, `react-native`, `expo`) ───────────
+  // Everything below is ignored for Flutter, which builds with `flutter build
+  // apk` and has none of these questions. See `archetypes/androidgradle.ts`.
+
+  /**
+   * Repo-relative directory holding the Gradle build (the one with `gradlew`).
+   * DERIVED, not asked: `workdir` for a native app, `<workdir>/android` for
+   * React Native and Expo. Set it only for a repo shaped like neither.
+   */
+  gradleDir?: string;
+  /**
+   * The Gradle module applying `com.android.application`, e.g. `app`. `''`
+   * means the root project is itself the app. DETECTED by `gradle.ts` —
+   * including the modern layout where the plugin id appears only in
+   * `gradle/libs.versions.toml`.
+   */
+  appModule?: string;
+  /**
+   * JDK for the runner. Unset → 17, which every AGP 8.x and 9.x states as its
+   * minimum. Raise it to match a project that has already moved.
+   */
+  javaVersion?: string;
+  /**
+   * The validate lane's Gradle tasks. Unset → the app module's `lint` and
+   * `testDebugUnitTest`. Set it to the project's OWN gate where it has one —
+   * PLAYBOOK §4: matching the project's gate beats loosening it.
+   */
+  validateTasks?: string;
+  /**
+   * react-native / expo: which package manager installs the JS dependencies.
+   * DETECTED from `packageManager` in package.json, then the lockfile.
+   */
+  packageManager?: 'npm' | 'yarn' | 'pnpm';
+  /** react-native / expo: Node for the runner. Unset → the version `react-native`'s own `engines` requires. */
+  nodeVersion?: string;
 }
 
 /** The surface's trigger policy, with the pre-policy defaults filled in. */
@@ -159,7 +200,18 @@ function artifactPath(c: AndroidConfig): string {
     : '../build/app/outputs/flutter-apk/app-release.apk';
 }
 
+/**
+ * The Android pipeline files for one surface.
+ *
+ * Two pipelines live behind this name because two build systems do. Flutter
+ * keeps the fastlane lane it has always had, byte for byte; everything else
+ * goes to `androidgradle.ts` and gets `./gradlew`. The split is on `framework`
+ * rather than on anything about the directory layout, because a Flutter
+ * `android/` directory and a bare React Native `android/` directory look
+ * identical from outside and only one of them can be built with `flutter`.
+ */
 export function planAndroidFiles(c: AndroidConfig): GeneratedFile[] {
+  if (isGradleFramework(androidFramework(c))) return planGradleAndroidFiles(c);
   const fastfileVars = {
     BUILD_STEP: buildStep(c),
     FIREBASE_APP_ID: c.firebaseAppId,
@@ -188,7 +240,18 @@ export function planAndroidFiles(c: AndroidConfig): GeneratedFile[] {
 /**
  * Write the Android pipeline files. An existing non-launchpad
  * `android/fastlane/Fastfile` is PRESERVED, never overwritten — see `writeGuarded`.
+ *
+ * The Gradle path resolves two fields off the repository first (the app module
+ * and, for JS projects, the package manager). Those are answers ABOUT the repo
+ * rather than decisions about the pipeline, so nobody is asked for them; doing
+ * it here rather than in `planAndroidFiles` keeps the planner pure and keeps
+ * every test able to state its own inputs.
  */
 export function writeAndroidFiles(repo: string, c: AndroidConfig): WriteResult {
-  return writeGuarded(repo, planAndroidFiles(c));
+  return writeGuarded(repo, planAndroidFiles(resolveAndroidConfig(repo, c)));
+}
+
+/** The config `apply` actually writes from — see `writeAndroidFiles`. */
+export function resolveAndroidConfig(repo: string, c: AndroidConfig): AndroidConfig {
+  return isGradleFramework(androidFramework(c)) ? resolveGradleConfig(repo, c) : c;
 }

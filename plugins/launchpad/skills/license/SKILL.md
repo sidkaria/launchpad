@@ -37,14 +37,21 @@ description: Licensing and provenance — activate a launchpad licence, check it
 
 ```bash
 node "${CLAUDE_PLUGIN_ROOT}/dist/cli/index.js" license                     # status, and re-check with the provider
-node "${CLAUDE_PLUGIN_ROOT}/dist/cli/index.js" license activate <key>      # bind this machine
+node "${CLAUDE_PLUGIN_ROOT}/dist/cli/index.js" license <key>               # bind this machine (same as `license activate <key>`)
 node "${CLAUDE_PLUGIN_ROOT}/dist/cli/index.js" license deactivate          # release this machine's seat
 node "${CLAUDE_PLUGIN_ROOT}/dist/cli/index.js" version                     # which build is running, and from where
 ```
 
+When someone hands you a key ("here's my launchpad key: …"), run `license <key>` and relay what it prints. Things it handles so you do not have to:
+
+- **Running it twice spends nothing.** If this machine already holds that key, it re-checks instead of activating — Lemon Squeezy counts every activation as a new machine, and a buyer unsure it worked used to burn a seat each time.
+- **A different key replaces the old one** and releases the old key's seat on this machine.
+- **It never hangs.** Activation waits at most 15 seconds, a status check 8; a licence server that accepts the connection and never answers is reported as "no answer in time".
+- **Failures say which of three things happened** — no connection, no answer in time, or an answer that was not the licence server's (a captive portal) — and that nothing was used up. A rate limit or an outage is never reported as the key being refused.
+
 ## What is free, and what is not
 
-**Free, always:** `detect`, `setup`, `status`, `score`, `doctor`, `projects`, `dashboard`. Everything that tells someone the truth about their own projects.
+**Free, always:** `detect`, `setup`, `status`, `score`, `doctor`, `needs`, `confirm`, `projects`, `dashboard`, `report`, `secret`. Everything that tells someone the truth about their own projects.
 
 **Licensed:** `apply`, `secrets`, `release`, `domains`. The verbs that do the work.
 

@@ -8,13 +8,17 @@ import {
   IOS_DEFAULT_DISTRIBUTE_ON, IOS_DEFAULT_RUNNER, flutterSetupStep, type DistributeTrigger,
 } from './triggers.js';
 import { codegenWorkflowStep } from './mobilevalidate.js';
+import { DEFAULT_NODE_VERSION, detectPackageManager } from './androidgradle.js';
 import { writeGuarded, type WriteResult } from '../generated.js';
 
 export interface IosConfig {
   appName: string;
-  // 'react-native' and 'expo' are DETECTED but not yet wireable — see
-  // UNSUPPORTED_FRAMEWORKS. They are in the union so a detected surface can
-  // record what it actually is rather than being mislabelled 'native'.
+  /**
+   * What builds this surface. Four values, three pipelines: `flutter` has its
+   * own (match signing, `flutter build ipa`, an ExportOptions.plist), while
+   * `native`, `react-native` and `expo` all archive the same way with
+   * `build_app` and differ only in what has to happen on the runner first.
+   */
   framework: 'flutter' | 'native' | 'react-native' | 'expo';
   bundleId: string;
   scheme: string;        // native: xcodebuild scheme; flutter: '' (uses Runner)
@@ -65,6 +69,25 @@ export interface IosConfig {
   flutterVersion?: string;
   // validate-only: extra `flutter test` args (see MobileValidateConfig.testArgs).
   testArgs?: string;
+
+  // ── react-native / expo ───────────────────────────────────────────────────
+  // Ignored by flutter and native, which have no JavaScript in their build.
+
+  /**
+   * The Xcode workspace fastlane archives, relative to `ios/`. Unset →
+   * `<scheme>.xcworkspace`, which is what `react-native init` and `expo
+   * prebuild` both produce. It has to be the WORKSPACE and never the project:
+   * CocoaPods puts the Pods project beside the app's, and archiving the
+   * `.xcodeproj` alone builds without them.
+   */
+  workspace?: string;
+  /**
+   * Which package manager installs the JS dependencies. DETECTED from
+   * `packageManager` in package.json, then the lockfile.
+   */
+  packageManager?: 'npm' | 'yarn' | 'pnpm';
+  /** Node for the runner. Unset → the version `react-native`'s own `engines` requires. */
+  nodeVersion?: string;
 }
 
 /** The surface's trigger policy, with the pre-policy defaults filled in. */
@@ -83,14 +106,20 @@ export interface GeneratedFile { path: string; contents: string; }
 // The App Store Connect API key — the only secrets a cloud-signed iOS surface
 // needs (upload + cloud signing). Every iOS surface needs these three.
 /**
- * Frameworks detection recognises but `apply` cannot yet build.
+ * Frameworks detection recognises and `apply` cannot build.
  *
- * Emitting a 'native' pipeline for these would be worse than refusing: bare
- * React Native needs a CocoaPods install and a JS bundle step, and Expo needs
- * `expo prebuild` to even produce an ios/ directory. The generated workflow
- * would look correct, run, and fail — after paying for the build.
+ * **Empty, and that is the point.** It held `react-native` and `expo` because
+ * emitting the plain `native` pipeline for either would have been worse than
+ * refusing: bare React Native needs a CocoaPods install, and Expo needs
+ * `expo prebuild` before an `ios/` directory exists at all. The workflow would
+ * have looked correct, run, and failed — after paying for a macOS runner.
+ *
+ * Both now have those steps (`jsSetupSteps`, `iosPrebuildStep`), so both build.
+ * The list stays rather than being deleted because it is the seam the refusal
+ * hangs on, and the next framework detection learns to name will need it again
+ * before its pipeline is written.
  */
-export const UNSUPPORTED_FRAMEWORKS = ['react-native', 'expo'] as const;
+export const UNSUPPORTED_FRAMEWORKS = [] as const;
 
 export function isWireable(framework: string): boolean {
   return !(UNSUPPORTED_FRAMEWORKS as readonly string[]).includes(framework);
@@ -301,12 +330,20 @@ function buildStep(c: IosConfig): string {
       `    sh("${args.join(' ')}")`,
     ].filter(Boolean).join('\n');
   }
+  // React Native and Expo archive the CocoaPods workspace rather than a bare
+  // project. Naming it is not a nicety: `pod install` writes the Pods project
+  // beside the app's, and archiving the `.xcodeproj` alone compiles without
+  // every dependency CocoaPods just installed.
+  const workspaceLine = isJsFramework(c.framework)
+    ? [`      workspace: "${c.workspace ?? `${c.scheme}.xcworkspace`}",`]
+    : [];
   if (signingMode(c) === 'cloud') {
     // Only `xcargs` — gym applies it to both the archive and the export step, so
     // passing export_xcargs too would land -authenticationKeyPath on
     // `xcodebuild -exportArchive` twice ("may only be provided once").
     return [
       'build_app(',
+      ...workspaceLine,
       `      scheme: "${c.scheme}",`,
       '      export_method: "app-store",',
       `      output_name: "${c.appName}.ipa",`,
@@ -320,6 +357,7 @@ function buildStep(c: IosConfig): string {
   // "match AppStore <bundle>" profile the Flutter ExportOptions.plist uses).
   return [
     'build_app(',
+    ...workspaceLine,
     `      scheme: "${c.scheme}",`,
     '      export_method: "app-store",',
     `      output_name: "${c.appName}.ipa",`,
@@ -327,6 +365,97 @@ function buildStep(c: IosConfig): string {
     `      export_options: { signingStyle: "manual", provisioningProfiles: { "${c.bundleId}" => "match AppStore ${c.bundleId}" } }`,
     '    )',
   ].join('\n');
+}
+
+/** React Native and Expo: the two frameworks whose iOS build starts in node_modules. */
+export const isJsFramework = (f: string): boolean => f === 'react-native' || f === 'expo';
+
+/**
+ * Where fastlane runs, repo-relative.
+ *
+ * `<workdir>/ios` for React Native and Expo, because that is where their Xcode
+ * workspace lives and where their own template puts `fastlane/` — the layout
+ * every RN doc, and every RN repo that already has lanes, assumes. `workdir`
+ * itself for Flutter and native, unchanged.
+ */
+export const iosFastlaneDir = (c: IosConfig): string =>
+  (isJsFramework(c.framework) ? (c.workdir === '.' ? 'ios' : `${c.workdir}/ios`) : c.workdir);
+
+/**
+ * Node, the JS install, and CocoaPods — the steps a React Native or Expo build
+ * needs before Xcode can do anything, and nothing at all for the other two.
+ *
+ * There is deliberately NO `react-native bundle` step. The Release scheme runs
+ * Xcode's own "Bundle React Native code and images" build phase, which is what
+ * produces the JS bundle inside the archive; a separate bundle step would
+ * either duplicate that work or leave a second bundle the build ignores.
+ *
+ * `bundle exec pod install` rather than `pod install` is React Native's own
+ * documented form, and it is run from `ios/` so bundler finds the Gemfile
+ * whether the template put it at the project root (current) or in `ios/`
+ * (older, and what several real repos still have). No Gemfile anywhere falls
+ * back to a bare `pod install` instead of failing on `bundle install`.
+ */
+export function jsSetupSteps(c: IosConfig, stepIf: string): string {
+  if (!isJsFramework(c.framework)) return '';
+  const pm = c.packageManager ?? 'npm';
+  const jsDir = c.workdir === '.' || !c.workdir ? '.' : c.workdir;
+  const lock = { npm: 'package-lock.json', yarn: 'yarn.lock', pnpm: 'pnpm-lock.yaml' }[pm];
+  const install = { npm: 'npm ci', yarn: 'yarn install --immutable', pnpm: 'pnpm install --frozen-lockfile' }[pm];
+  const lines: string[] = [
+    '      - uses: actions/setup-node@v4',
+    ...(stepIf ? [stepIf] : []),
+    '        with:',
+    `          node-version: '${c.nodeVersion ?? DEFAULT_NODE_VERSION}'`,
+    `          cache: ${pm}`,
+    `          cache-dependency-path: ${jsDir === '.' ? lock : `${jsDir}/${lock}`}`,
+    '',
+  ];
+  if (pm === 'pnpm') {
+    lines.push(
+      '      - uses: pnpm/action-setup@v4',
+      ...(stepIf ? [stepIf] : []),
+      '        with:',
+      '          run_install: false',
+      '',
+    );
+  }
+  lines.push(
+    '      - name: Install JavaScript dependencies',
+    ...(stepIf ? [stepIf] : []),
+    `        working-directory: ${jsDir}`,
+    `        run: ${install}`,
+    '',
+  );
+  if (c.framework === 'expo') {
+    lines.push(
+      '      # Continuous Native Generation: an Expo app has no ios/ directory in',
+      '      # the repository, so CI generates one from app.json and the config',
+      '      # plugins. --clean is what makes that deterministic — Expo documents an',
+      '      # incremental prebuild as able to "layer changes" and not necessarily',
+      '      # produce the same result.',
+      '      - name: Generate the native iOS project (expo prebuild)',
+      ...(stepIf ? [stepIf] : []),
+      `        working-directory: ${jsDir}`,
+      '        run: npx expo prebuild --platform ios --clean --no-install',
+      '',
+    );
+  }
+  lines.push(
+    '      - name: Install CocoaPods dependencies',
+    ...(stepIf ? [stepIf] : []),
+    `        working-directory: ${iosFastlaneDir(c)}`,
+    '        run: |',
+    '          if [ -f Gemfile ] || [ -f ../Gemfile ]; then',
+    '            bundle install',
+    '            bundle exec pod install',
+    '          else',
+    '            pod install',
+    '          fi',
+    '',
+    '',
+  );
+  return lines.join('\n');
 }
 
 function ipaGlob(c: IosConfig): string {
@@ -480,7 +609,8 @@ export function planIosFiles(c: IosConfig): GeneratedFile[] {
   const policy = iosTriggerPolicy(c);
   const stepIf = stepIfLine(policy.distributeOn);
   const wfVars = {
-    APP_NAME: c.appName, WORKDIR: c.workdir,
+    APP_NAME: c.appName, WORKDIR: iosFastlaneDir(c),
+    JS_SETUP_STEPS: jsSetupSteps(c, stepIf),
     RUNS_ON: c.runsOn ?? IOS_DEFAULT_RUNNER,
     ON_TRIGGERS: renderOnBlock(policy),
     SCHEDULE_GUARD: scheduleGuardStep(policy, c.workdir),
@@ -495,7 +625,7 @@ export function planIosFiles(c: IosConfig): GeneratedFile[] {
     DART_DEFINE_ENV: c.framework === 'flutter' ? dartDefineEnv(c.dartDefines) : '',
   };
   const files: GeneratedFile[] = [
-    { path: underWorkdir(c.workdir, 'fastlane/Fastfile'), contents: render(tmpl('Fastfile'), fastfileVars) },
+    { path: underWorkdir(iosFastlaneDir(c), 'fastlane/Fastfile'), contents: render(tmpl('Fastfile'), fastfileVars) },
     { path: iosWorkflowPath(c), contents: render(tmpl('release.yml'), wfVars) },
   ];
   if (c.framework === 'flutter') {
@@ -513,5 +643,16 @@ export function planIosFiles(c: IosConfig): GeneratedFile[] {
  * overwritten — see `writeGuarded`.
  */
 export function writeIosFiles(repo: string, c: IosConfig): WriteResult {
-  return writeGuarded(repo, planIosFiles(c));
+  return writeGuarded(repo, planIosFiles(resolveIosConfig(repo, c)));
+}
+
+/**
+ * Fill in the one field that is an answer about the repository rather than a
+ * decision about the pipeline. Nobody is asked which package manager they use;
+ * the lockfile already says.
+ */
+export function resolveIosConfig(repo: string, c: IosConfig): IosConfig {
+  if (!isJsFramework(c.framework)) return c;
+  const jsDir = c.workdir === '.' || !c.workdir ? repo : join(repo, c.workdir);
+  return { ...c, packageManager: c.packageManager ?? detectPackageManager(jsDir) };
 }

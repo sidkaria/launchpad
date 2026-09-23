@@ -6,12 +6,12 @@ import { fileURLToPath } from 'node:url';
 import { addIdea, setStatus, isStatus, createTask, setPriority } from '../nightshift/backlog.js';
 import { readConfig, writeConfig } from '../nightshift/config.js';
 import { readRegistry, addProject, removeProject } from '../registry.js';
-import { readState } from '../state.js';
+import { readState, writeState } from '../state.js';
 import { detectAssets } from '../assets.js';
 import { scorecard } from '../scorecard.js';
-import { confirm, unconfirm } from '../confirmations.js';
-import { basename, dirname, isAbsolute, join } from 'node:path';
+import { confirm, unconfirm, record } from '../confirmations.js';
 import { dashboardData } from './data.js';
+import { basename, dirname, isAbsolute, join } from 'node:path';
 import { demoCode, materializeDemo } from './demo.js';
 import { startReplay } from './replay.js';
 import { watchFleet } from './watch.js';
@@ -256,6 +256,45 @@ async function handle(
       return json(res, 200, { ok: true, path: expanded });
     }
 
+    /**
+     * Answer a "needs you" item that has no other home — a bill accepted or
+     * declined, an irreversible act acknowledged, a store's fee noted.
+     *
+     * Two things make this safe to have on a read-mostly dashboard. It writes
+     * one file, `.launchpad/confirmed.yml`, which is launchpad's own record and
+     * not the user's code. And it can only write a NAMESPACED id, enforced by
+     * `record()` itself — a bare id would land in the same file the scorecard
+     * reads, which is how a button on a dashboard could turn a real gap green.
+     *
+     * It takes a LIST of paths because the question can be account-wide: Apple's
+     * $99 is one fact about a person, not nine facts about nine repositories,
+     * and answering it in one repo and being asked again in the next is exactly
+     * the nagging this whole strip exists to end. Every path is still checked
+     * against the registry, one at a time, like every other write here.
+     */
+    if (url.pathname === '/api/acknowledge') {
+      const id = String(body.id ?? '').trim();
+      const choice = String(body.choice ?? 'acknowledged').trim() || 'acknowledged';
+      if (!id.includes(':')) {
+        return json(res, 400, { error: 'that is not a "needs you" id — a scorecard row is confirmed with /api/confirm' });
+      }
+      const registered = new Set(readRegistry(home).projects.map(p => p.path));
+      const raw = Array.isArray(body.paths) ? body.paths : [body.path];
+      const paths = raw.map(String).filter(p => registered.has(p));
+      if (!paths.length) return json(res, 400, { error: 'unknown project' });
+      // Not a free-text field: the page offers a fixed set, and anything else
+      // would end up rendered back as "you decided this on <date>".
+      if (!['accept', 'decline', 'acknowledged'].includes(choice)) {
+        return json(res, 400, { error: 'choice must be accept, decline or acknowledged' });
+      }
+      if (body.undo === true) {
+        for (const p of paths) unconfirm(p, id);
+        return json(res, 200, { ok: true, undone: paths.length });
+      }
+      for (const p of paths) record(p, id, choice);
+      return json(res, 200, { ok: true, recorded: paths.length });
+    }
+
     if (url.pathname === '/api/projects/remove') {
       const target = String(body.path ?? '');
       if (!readRegistry(home).projects.some(p => p.path === target)) {
@@ -299,6 +338,33 @@ async function handle(
           return json(res, 400, { error: `${check} is not yours to confirm — launchpad can see this one` });
         }
         confirm(repo, check);
+        return json(res, 200, { ok: true });
+      }
+      /**
+       * Decide what happens to a pipeline that was already in the repo.
+       *
+       * The one write here that touches `state.yml`, and it earns that: the
+       * 2026-08-02 audit's prerequisite was "make the answers load-bearing
+       * before adding prompts; a prompt whose answer nothing enforces is worse
+       * than no prompt". `apply` branches on `disposition` and on nothing else,
+       * so recording this anywhere but the state file would put a button on the
+       * screen that changed no behaviour at all.
+       *
+       * It writes ONE field on ONE pipeline that is already listed, and it
+       * cannot add a pipeline, name a path or touch a surface.
+       */
+      case '/api/disposition': {
+        const path = String(body.pipeline ?? '');
+        const to = String(body.disposition ?? '');
+        if (!['adopt', 'migrate', 'leave-alone'].includes(to)) {
+          return json(res, 400, { error: 'disposition must be adopt, migrate or leave-alone' });
+        }
+        const st = readState(repo);
+        if (!st) return json(res, 400, { error: 'this project is not set up' });
+        const pipe = st.pipelines.find(x => x.path === path);
+        if (!pipe) return json(res, 400, { error: `no pipeline at ${path} in this project` });
+        pipe.disposition = to as typeof pipe.disposition;
+        writeState(repo, st);
         return json(res, 200, { ok: true });
       }
       case '/api/nightshift/enabled': {

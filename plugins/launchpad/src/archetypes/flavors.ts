@@ -1,8 +1,9 @@
 import { createHash } from 'node:crypto';
-import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync, mkdirSync, readdirSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { parse, stringify } from 'yaml';
 import type { Surface } from '../types.js';
+import { badgeDevPng } from './devbuild.js';
 import type { IosConfig } from './ios.js';
 import type { AndroidConfig } from './android.js';
 
@@ -142,7 +143,18 @@ interface PbxObject {
  */
 export function injectIosFlavors(
   pbxproj: string,
-  c: { bundleId: string; appName: string; devSuffix?: string },
+  c: {
+    bundleId: string;
+    appName: string;
+    devSuffix?: string;
+    /**
+     * The icon set the dev configs name. Defaults to `AppIcon-dev`; `null`
+     * leaves `ASSETCATALOG_COMPILER_APPICON_NAME` inherited from the base
+     * config, for an app with no icon set to make a dev one from — naming a
+     * set that does not exist fails the build in `actool`.
+     */
+    devIcon?: string | null;
+  },
 ): string {
   const objects = scanPbxObjects(pbxproj);
   if (!objects.length) return pbxproj;
@@ -202,6 +214,7 @@ export function injectIosFlavors(
   if (baseNames.some((n) => new RegExp(`name = "?${escapeRe(n)}-(?:dev|prod)"?;`).test(pbxproj))) return pbxproj;
 
   const devSuffix = c.devSuffix ?? '.dev';
+  const devIcon = c.devIcon === undefined ? FLUTTER_DEV_ICON : c.devIcon;
   const taken = new Set(pbxproj.match(/[0-9A-F]{24}/g) ?? []);
 
   // base uuid → the replacement text for that object (itself, plus its clones).
@@ -234,7 +247,8 @@ export function injectIosFlavors(
             // scheme/config suffix), and `flutter_launcher_icons` emits the asset-catalog
             // set as `AppIcon-<flavor>`. The native/macOS dev-variant path in devbuild.ts
             // uses its own `AppIcon-Dev` convention; the two are separate subsystems.
-            text = setBuildSetting(text, 'ASSETCATALOG_COMPILER_APPICON_NAME', 'AppIcon-dev');
+            // `wireFlutterFlavors` makes the set this names (ensureFlavorDevIconSet).
+            if (devIcon) text = setBuildSetting(text, 'ASSETCATALOG_COMPILER_APPICON_NAME', devIcon);
           }
         }
         slot.made.push(text);
@@ -351,9 +365,20 @@ const SCHEMES_DIR = 'ios/Runner.xcodeproj/xcshareddata/xcschemes';
  * Kotlin-DSL only, and silently emitting Groovy-shaped text would corrupt the
  * build file. Groovy support is a future milestone.
  *
+ * The dev configs name an `AppIcon-dev` set, so this also MAKES that set — a
+ * DEV-badged copy of `AppIcon` (see `ensureFlavorDevIconSet`). Naming it
+ * without making it was a real bug: every dev-flavour iOS build died in
+ * `actool` until somebody ran a runbook step nobody knew about. With no
+ * `AppIcon` set to copy, the dev configs keep the base icon name instead, and
+ * `log` says so.
+ *
  * Returns the repo-relative paths actually changed (empty on a re-run).
  */
-export function wireFlutterFlavors(repo: string, c: FlavorWiringConfig): string[] {
+export function wireFlutterFlavors(
+  repo: string,
+  c: FlavorWiringConfig,
+  log: (line: string) => void = console.log,
+): string[] {
   const changed: string[] = [];
   const rel = (p: string) => (c.workdir === '.' ? p : `${c.workdir}/${p}`);
   const patch = (relPath: string, fn: (s: string) => string): void => {
@@ -375,8 +400,17 @@ export function wireFlutterFlavors(repo: string, c: FlavorWiringConfig): string[
   patch(rel('android/app/build.gradle.kts'), (s) =>
     injectAndroidFlavors(s, { appName: c.appName, prodLabel }));
   patch(manifestRel, injectAndroidManifestLabel);
-  patch(rel('ios/Runner.xcodeproj/project.pbxproj'), (s) =>
-    injectIosFlavors(s, { bundleId: c.bundleId, appName: c.appName }));
+  // Name the dev icon set only when it exists or can be made from AppIcon.
+  const pbxRel = rel('ios/Runner.xcodeproj/project.pbxproj');
+  const iosDir = join(repo, rel('ios'));
+  const canHaveDevIcon = !!findIconSet(iosDir, FLUTTER_DEV_ICON) || !!findIconSet(iosDir, FLUTTER_BASE_ICON);
+  patch(pbxRel, (s) =>
+    injectIosFlavors(s, { bundleId: c.bundleId, appName: c.appName, devIcon: canHaveDevIcon ? FLUTTER_DEV_ICON : null }));
+  if (!canHaveDevIcon && changed.includes(pbxRel)) {
+    log(`  ! ${rel('ios')}: no \`${FLUTTER_BASE_ICON}.appiconset\` to make a DEV icon from, so the dev flavour`);
+    log('      keeps the prod icon. Add one (e.g. `dart run flutter_launcher_icons`) and set');
+    log(`      ASSETCATALOG_COMPILER_APPICON_NAME = ${FLUTTER_DEV_ICON} on the *-dev configs to tell them apart.`);
+  }
   patch(rel('ios/Podfile'), (s) => injectPodfileConfigs(s, [...FLAVORS]));
   patch(rel('ios/Runner/Info.plist'), injectInfoPlistDisplayName);
 
@@ -394,7 +428,116 @@ export function wireFlutterFlavors(repo: string, c: FlavorWiringConfig): string[
     }
   }
 
+  changed.push(...ensureFlavorDevIconSet(repo, c, log));
   return changed;
+}
+
+/** The icon set a Flutter dev flavour names (`flutter_launcher_icons` spells it this way). */
+const FLUTTER_DEV_ICON = 'AppIcon-dev';
+const FLUTTER_BASE_ICON = 'AppIcon';
+
+/**
+ * Every icon set name a project file asks `actool` for — from a `.pbxproj`
+ * (`ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon-dev;`) or an xcodegen
+ * `project.yml` (`ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon-dev`). A value
+ * that is a build-setting reference (`$(…)`) is not a name and is skipped.
+ */
+export function appIconNamesIn(projectText: string): string[] {
+  const re = /ASSETCATALOG_COMPILER_APPICON_NAME"?\s*[=:]\s*["']?([A-Za-z0-9_.\- ]+?)["']?\s*(?:;|$)/gm;
+  const out = new Set<string>();
+  for (let m = re.exec(projectText); m; m = re.exec(projectText)) out.add(m[1].trim());
+  return [...out];
+}
+
+/**
+ * `<catalog>/<name>.appiconset` under a Flutter `ios/` dir, matched
+ * case-INsensitively: the macOS runner's filesystem is, so a repo holding both
+ * `AppIcon-Dev` and a freshly made `AppIcon-dev` cannot even be checked out
+ * there. Looks in every `ios/<dir>/*.xcassets` (Flutter's is
+ * `ios/Runner/Assets.xcassets`). Returns the absolute path, or undefined.
+ */
+function findIconSet(iosDir: string, name: string): string | undefined {
+  const want = `${name}.appiconset`.toLowerCase();
+  for (const dir of safeLs(iosDir)) {
+    for (const cat of safeLs(join(iosDir, dir)).filter((n) => n.endsWith('.xcassets'))) {
+      const hit = safeLs(join(iosDir, dir, cat)).find((n) => n.toLowerCase() === want);
+      if (hit) return join(iosDir, dir, cat, hit);
+    }
+  }
+  return undefined;
+}
+
+function safeLs(dir: string): string[] {
+  try { return readdirSync(dir).sort(); } catch { return []; }
+}
+
+/**
+ * Make the dev icon set the iOS project names, if it does not exist yet.
+ *
+ * Reads the names out of the project itself — the `.pbxproj` `apply` edited,
+ * or an xcodegen `project.yml` — so it repairs a project flavoured before this
+ * existed as well as one flavoured now, without touching either file again.
+ * For each `<Base>-dev` name with no set, `<Base>.appiconset` is copied beside
+ * it: `Contents.json` verbatim (same filenames, same sizes) and every PNG
+ * DEV-badged by `badgeDevPng`. A PNG it cannot decode is copied unbadged and
+ * said — a dev icon that looks like prod still builds.
+ *
+ * Never overwrites: an existing set, under any capitalisation, is left exactly
+ * as it is — including one `flutter_launcher_icons` rendered — so a second run
+ * is a no-op. With no base set to copy there is nothing to make, and `log`
+ * names the file and the two ways to fix it rather than letting `actool` be
+ * the one to say it.
+ *
+ * Returns the repo-relative set directories it created.
+ */
+export function ensureFlavorDevIconSet(
+  repo: string,
+  c: Pick<FlavorWiringConfig, 'workdir'>,
+  log: (line: string) => void = console.log,
+): string[] {
+  const rel = (p: string) => (c.workdir === '.' ? p : `${c.workdir}/${p}`);
+  const iosDir = join(repo, rel('ios'));
+  const projectText = ['ios/Runner.xcodeproj/project.pbxproj', 'ios/project.yml']
+    .map((p) => join(repo, rel(p)))
+    .filter((p) => existsSync(p))
+    .map((p) => readFileSync(p, 'utf8'))
+    .join('\n');
+  const wanted = appIconNamesIn(projectText).filter((n) => /-dev$/i.test(n));
+
+  const made: string[] = [];
+  for (const name of wanted) {
+    if (findIconSet(iosDir, name)) continue;   // exists — never touched
+    const baseName = name.replace(/-dev$/i, '');
+    const base = findIconSet(iosDir, baseName);
+    if (!base) {
+      log(`  ! ${rel('ios')}: the dev flavour names an \`${name}\` icon set, and there is no`);
+      log(`      \`${baseName}.appiconset\` to make it from — a dev iOS build will fail in actool.`);
+      log(`      Copy your ${baseName}.appiconset to ${name}.appiconset, or render one with`);
+      log('      `dart run flutter_launcher_icons -f flutter_launcher_icons-dev.yaml`.');
+      continue;
+    }
+    const out = join(dirname(base), `${name}.appiconset`);
+    mkdirSync(out, { recursive: true });
+    const unbadged: string[] = [];
+    for (const file of safeLs(base)) {
+      const src = join(base, file);
+      let bytes: Buffer;
+      try { bytes = readFileSync(src); } catch { continue; }   // a subdirectory — not part of a set
+      if (/\.png$/i.test(file)) {
+        const badged = badgeDevPng(bytes);
+        if (badged) bytes = badged;
+        else unbadged.push(file);
+      }
+      writeFileSync(join(out, file), bytes);
+    }
+    const outRel = rel(`ios/${out.slice(iosDir.length + 1).split(/[\\/]/).join('/')}`);
+    made.push(outRel);
+    if (unbadged.length) {
+      log(`  ~ ${outRel}: ${unbadged.length} icon(s) copied without the DEV badge (not a PNG this can`);
+      log(`      re-encode: ${unbadged.slice(0, 3).join(', ')}${unbadged.length > 3 ? ', …' : ''}). The build is unaffected.`);
+    }
+  }
+  return made;
 }
 
 /** Keys whose value is an icon path (`adaptive_icon_background` may be a colour — never touched). */

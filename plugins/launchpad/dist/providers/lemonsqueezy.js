@@ -5,6 +5,25 @@ const post = async (fetcher, path, form, signal) => fetcher(`${LEMONSQUEEZY_API}
     body: new URLSearchParams(form).toString(),
     ...(signal ? { signal } : {}),
 });
+/**
+ * Lemon Squeezy's refusal, in words a buyer can act on.
+ *
+ * Its errors are written for developers — `license_key not found.` is a field
+ * name and a period — and the buyer reading it has just pasted something out
+ * of a receipt email. The one thing they can do about "not found" is check
+ * what they pasted, so that is what it says. Anything else is quoted rather
+ * than paraphrased: guessing at a reason we were not given is how a refund
+ * gets called an expiry.
+ */
+export function refusedWhy(error) {
+    if (!error)
+        return 'Lemon Squeezy rejected that key.';
+    if (/license_key not found/i.test(error)) {
+        return 'Lemon Squeezy has no key like that. Check it against your receipt email and paste the whole '
+            + 'thing, dashes included.';
+    }
+    return `Lemon Squeezy says: "${error.replace(/\.$/, '')}".`;
+}
 export const lemonSqueezy = {
     id: 'lemonsqueezy',
     label: 'Lemon Squeezy',
@@ -53,7 +72,20 @@ export const lemonSqueezy = {
         let body;
         try {
             const res = await post(fetcher, 'activate', { license_key: key, instance_name: instanceName });
+            /**
+             * The same classification `validate` has always had, and activation had
+             * none of it: a 429 from Lemon Squeezy's rate limiter carries a JSON
+             * body (`{"error":"Too Many Attempts."}`), so it parsed, `activated` was
+             * absent, and a buyer who had just paid was told their key was REFUSED
+             * with the rate limiter's own words. A 500 with an HTML body surfaced as
+             * a JSON parse error. Neither is Lemon Squeezy saying no.
+             */
+            if (res.status >= 500 || res.status === 408 || res.status === 429) {
+                return { status: 'unreachable', why: `HTTP ${res.status}` };
+            }
             body = (await res.json());
+            if (!body || typeof body !== 'object')
+                return { status: 'unreachable', why: 'unrecognised response' };
         }
         catch (e) {
             return { status: 'unreachable', why: e.message };
@@ -64,17 +96,20 @@ export const lemonSqueezy = {
             if (limit != null && used != null && used >= limit) {
                 return {
                     status: 'refused',
-                    why: `This key is already active on ${used} of ${limit} machines. Deactivate one with `
-                        + '`/launchpad:license` there and deactivate it, or buy another seat.',
+                    why: `This key is already active on ${used} of ${limit} machines. To move it here: on a machine `
+                        + 'you no longer use, run `/launchpad:license` and deactivate it, then activate again here.',
                 };
             }
-            return { status: 'refused', why: body?.error || 'Lemon Squeezy rejected that key.' };
+            return { status: 'refused', why: refusedWhy(body?.error) };
         }
         return { status: 'activated', instanceId: body.instance?.id };
     },
     async deactivate(key, instanceId, fetcher) {
         try {
             const res = await post(fetcher, 'deactivate', { license_key: key, instance_id: instanceId });
+            if (res.status >= 500 || res.status === 408 || res.status === 429) {
+                return { status: 'unreachable', why: `HTTP ${res.status}` };
+            }
             const body = (await res.json());
             return body?.deactivated
                 ? { status: 'released' }

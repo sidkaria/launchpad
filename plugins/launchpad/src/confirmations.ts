@@ -32,6 +32,29 @@ import { parse, stringify } from 'yaml';
  * Stored in the repo, like everything else launchpad records: it travels with
  * the code, it is reviewable in a diff, and a teammate can see what was
  * asserted and by whom.
+ *
+ * ## The second use: answers to things that are not scorecard rows
+ *
+ * `src/needs.ts` asks a handful of questions the scorecard does not own — a
+ * monthly bill to accept or decline, an irreversible act to acknowledge before
+ * it happens, a store's fee and its calendar gate. They are the same *kind* of
+ * fact as a keystore backup: launchpad cannot read the answer off disk, and
+ * once a person has answered it must stop asking. So they live here, under
+ * their own namespaced ids (`money:…`, `irreversible:…`, `gate:…`), rather than
+ * in a second store with a second format and a second way to go stale.
+ *
+ * Two things had to be added for that, and only two:
+ *
+ *   - **`choice`**, because "I will pay for that" and "no, keep it free" are
+ *     both answers and only one of them is a yes. A scorecard confirmation has
+ *     no such axis — the only answer to "is the keystore backed up" is yes.
+ *   - **the id namespace**, which is nothing but a naming convention: a
+ *     scorecard id is a bare word (`keystore-backup`), so a colon cannot
+ *     collide with one, and `scorecard()` looks up only ids it already knows.
+ *
+ * The safety rules above are unchanged and still apply to the scorecard rows.
+ * Nothing recorded here can turn a `gap` green, because the scorecard never
+ * reads these ids at all.
  */
 
 export interface Confirmation {
@@ -39,6 +62,15 @@ export interface Confirmation {
   at: string;
   /** Optional: where the keystore actually is, so the answer is worth something later. */
   note?: string;
+  /**
+   * Which way it was answered, for the questions that have more than one yes.
+   *
+   * Absent on a scorecard confirmation, where the only possible answer is "yes,
+   * this is handled". Present on a money decision (`accept` / `decline`) and on
+   * an acknowledgement (`acknowledged`), so the Decisions tab can say what was
+   * decided rather than only that something was.
+   */
+  choice?: string;
 }
 
 export type Confirmations = Record<string, Confirmation>;
@@ -48,6 +80,8 @@ const REL = join('.launchpad', 'confirmed.yml');
 const HEADER = `# Answers to the questions launchpad cannot answer by reading this repo.
 # Written by \`launchpad confirm <check>\`, and safe to edit or delete by hand.
 # Only checks graded "?" can appear here — a real gap cannot be confirmed away.
+# Ids with a colon (money:, irreversible:, gate:, keep:) are answers to the
+# "needs you" list rather than to a scorecard row; deleting one asks again.
 `;
 
 export function readConfirmations(repo: string): Confirmations {
@@ -62,10 +96,11 @@ export function readConfirmations(repo: string): Confirmations {
       // thing for someone to write, and refusing it would be pedantry.
       if (v === true) { out[id] = { at: 'unknown' }; continue; }
       if (v && typeof v === 'object') {
-        const o = v as { at?: unknown; note?: unknown };
+        const o = v as { at?: unknown; note?: unknown; choice?: unknown };
         out[id] = {
           at: typeof o.at === 'string' ? o.at : 'unknown',
           ...(typeof o.note === 'string' && o.note ? { note: o.note } : {}),
+          ...(typeof o.choice === 'string' && o.choice ? { choice: o.choice } : {}),
         };
       }
     }
@@ -93,4 +128,40 @@ export function unconfirm(repo: string, id: string): Confirmations {
   delete c[id];
   writeConfirmations(repo, c);
   return c;
+}
+
+/**
+ * Record an answer that carries a direction — accept, decline, acknowledged.
+ *
+ * `confirm()` with one more field rather than a second writer, so there is
+ * exactly one file format and exactly one place that knows how to date a
+ * record. The id must be namespaced (`money:…`), which is what keeps these out
+ * of the scorecard's way; passing a bare id here would put a row in the file
+ * that `scorecard()` would then read as a confirmation, which is the one thing
+ * the namespace exists to prevent.
+ */
+export function record(
+  repo: string, id: string, choice: string, note?: string, now = new Date(),
+): Confirmations {
+  if (!id.includes(':')) {
+    throw new Error(`a recorded answer needs a namespaced id (got "${id}") — bare ids belong to the scorecard`);
+  }
+  const c = readConfirmations(repo);
+  c[id] = { at: now.toISOString().slice(0, 10), choice, ...(note ? { note } : {}) };
+  writeConfirmations(repo, c);
+  return c;
+}
+
+/**
+ * Everything answered here that is NOT a scorecard row, newest first.
+ *
+ * The promise is that an acknowledgement is reachable afterwards: "you decided
+ * this on <date>" has to be somewhere a person can go and look, or the button
+ * that made an item disappear was a button that hid a decision.
+ */
+export function recordedAnswers(repo: string): { id: string; at: string; choice?: string; note?: string }[] {
+  return Object.entries(readConfirmations(repo))
+    .filter(([id]) => id.includes(':'))
+    .map(([id, c]) => ({ id, at: c.at, ...(c.choice ? { choice: c.choice } : {}), ...(c.note ? { note: c.note } : {}) }))
+    .sort((a, b) => b.at.localeCompare(a.at) || a.id.localeCompare(b.id));
 }

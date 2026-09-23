@@ -35,7 +35,7 @@ description: Diagnose a launchpad problem with `launchpad report`, and check or 
    or hand-writing the pipeline launchpad declined to write.
 <!-- /launchpad:standing-rules -->
 
-The vault is the macOS Keychain, service `launchpad`. Store a credential once and every project that needs it is provisioned automatically by `launchpad secrets` — no hand-typing a secret into a GitHub settings page, ever.
+The vault is the OS keychain where there is one (the macOS Keychain or the Linux Secret Service, service `launchpad`) and an encrypted file otherwise (Windows, containers, or wherever `LAUNCHPAD_VAULT_BACKEND=file` is set) — `doctor`'s first line says which. Store a credential once and every project that needs it is provisioned automatically by `launchpad secrets` — no hand-typing a secret into a GitHub settings page, ever.
 
 ## 0. Before asking anyone for help, run `report`
 
@@ -49,7 +49,7 @@ node "${CLAUDE_PLUGIN_ROOT}/dist/cli/index.js" report --out=launchpad-report.md
 It is written to be safe to paste in **public**:
 
 - Credentials appear **by name only** — `✓ present` or `✗ MISSING`. Never a value, never a length, never a hash. A length is a hint about the key space and buys a reader nothing.
-- The licence appears as one word — `licensed` / `grace` / `lapsed` / `unlicensed` — plus at most the **last four characters** of the key. (`grace` means validated once and not re-checked lately. It is fully licensed; nothing is withheld.)
+- The licence appears as one word — `licensed` / `lapsed` / `unlicensed` — plus at most the **last four characters** of the key, exactly as `license` prints them. A key that validated once and has not been re-checked lately is `licensed`: nothing expires and nothing is withheld.
 - The home directory is replaced with `~` everywhere, so no path carries the user's name.
 - Git remotes are reduced to a **host**: `github.com`, not the org, the repo name or any token embedded in the URL. A private repo's name can itself be the unreleased product.
 - The working tree is reported dirty-or-clean **by count**, never by filename.
@@ -92,13 +92,17 @@ Prefer running it in the repo you're wiring. Run it bare when you want the whole
 
 ## 2. Store what's missing
 
-Walk the user through obtaining each one (they're one-time and portal-based), then store it. Run this for them once they paste the value:
+Walk the user through obtaining each one (they're one-time and portal-based). Then **the user stores it, in their own terminal** — the value should never pass through this conversation:
 
 ```bash
-security add-generic-password -U -a <vault_key> -s launchpad -w '<value>'
+node "${CLAUDE_PLUGIN_ROOT}/dist/cli/index.js" secret set <vault_key>                    # prompts; nothing shows as they paste
+node "${CLAUDE_PLUGIN_ROOT}/dist/cli/index.js" secret set asc_api_key < AuthKey_XXXX.p8  # a file is piped, never pasted
+base64 < upload-keystore.jks | node "${CLAUDE_PLUGIN_ROOT}/dist/cli/index.js" secret set android_keystore_base64
 ```
 
-**Never print a secret value back to the user, into the transcript, or into a file.** Re-run `doctor` to confirm it reads back `✓`.
+`secret set` works on every vault backend (the old `security add-generic-password` recipe was macOS-only, and put the value on a command line where `ps` and shell history can see it). It refuses a name launchpad does not use and suggests the one that was probably meant — a value stored under a typo reads as missing forever. `CLAUDE_PLUGIN_ROOT` is not set in the user's own terminal: give them the full path, which `launchpad needs` and the dashboard's credential cards already print in runnable form.
+
+**Never print a secret value back to the user, into the transcript, or into a file.** If they paste one into the chat anyway, do not repeat it — tell them to store it with `secret set` and to rotate it if the chat is shared. Re-run `doctor` to confirm it reads back `✓`.
 
 ## 3. Credential reference
 

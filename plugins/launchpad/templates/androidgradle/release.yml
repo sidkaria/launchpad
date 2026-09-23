@@ -1,0 +1,141 @@
+name: Distribute {{APP_NAME}} (Android)
+
+on:
+{{ON_TRIGGERS}}
+
+permissions:
+  contents: read
+
+jobs:
+  android:
+    runs-on: {{RUNS_ON}}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # The version code is the commit count, so the whole history has to be
+          # here — and the schedule guard diffs it too.
+          fetch-depth: 0
+
+{{SCHEDULE_GUARD}}{{NODE_STEPS}}{{PREBUILD_STEP}}      - uses: actions/setup-java@v6
+{{STEP_IF}}        with:
+          distribution: temurin
+          java-version: '{{JAVA_VERSION}}'
+
+      # setup-gradle caches the Gradle user home AND validates every Gradle
+      # wrapper JAR's checksum on each run — wrapper validation has been folded
+      # in since v4, so there is deliberately no separate
+      # `gradle/actions/wrapper-validation` step. The action restricts cache
+      # WRITES to the default branch by itself; other branches read.
+      - uses: gradle/actions/setup-gradle@v6
+{{STEP_IF}}        with:
+          validate-wrappers: true
+
+      - name: Materialize the upload keystore
+{{STEP_IF}}        working-directory: {{GRADLE_DIR}}
+        env:
+          KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          # No keystore secret is NOT an error: the build below still compiles
+          # and still proves the pipeline, it just produces an unsigned artifact
+          # that no store will take. Saying which, once, beats failing a build
+          # with a Gradle error nobody can read.
+          if [ -z "$KEYSTORE_BASE64" ]; then
+            echo "::warning title=No upload keystore::ANDROID_KEYSTORE_BASE64 is not set, so this release is built UNSIGNED and nothing is distributed. Store the keystore with /launchpad:doctor, run \`launchpad secrets\`, then re-run."
+            exit 0
+          fi
+          echo "$KEYSTORE_BASE64" | base64 --decode > {{KEYSTORE_DEST}}
+          cat > key.properties <<EOF
+          storeFile=upload-keystore.jks
+          storePassword=$KEYSTORE_PASSWORD
+          keyAlias=$KEY_ALIAS
+          keyPassword=$KEY_PASSWORD
+          EOF
+
+      - name: Build the release artifacts
+{{STEP_IF}}        working-directory: {{GRADLE_DIR}}
+        run: |
+          # Monotonic by construction, and the same number a re-run of the same
+          # commit produces. Read by the `launchpadVersionCode` line `apply`
+          # injected into defaultConfig; inert if the app declined that edit.
+          VERSION_CODE=$(git rev-list --count HEAD)
+          echo "versionCode=$VERSION_CODE"
+          ./gradlew {{GRADLE_TASKS}} -PlaunchpadVersionCode="$VERSION_CODE" --stacktrace
+
+      - name: Collect the artifacts
+{{STEP_IF}}        id: artifacts
+        working-directory: {{GRADLE_DIR}}
+        run: |
+          # `find`, not `ls`: shellcheck rejects parsing `ls` (SC2012), and a
+          # generated workflow that trips a linter the buyer runs on their own
+          # repository is a support question launchpad wrote for itself.
+          apk=$(find {{OUT_DIR}}/apk/release -maxdepth 1 -name '*.apk' 2>/dev/null | sort | head -1)
+          aab=$(find {{OUT_DIR}}/bundle/release -maxdepth 1 -name '*.aab' 2>/dev/null | sort | head -1)
+          if [ -z "$apk" ] && [ -z "$aab" ]; then
+            echo "The Gradle build reported success but produced no .apk and no .aab under {{OUT_DIR}}."
+            echo "That usually means the app module is not the one launchpad was told about."
+            exit 1
+          fi
+          if [ -n "$apk" ]; then
+            echo "apk=$apk" >> "$GITHUB_OUTPUT"
+            echo "APK: $apk"
+            # Unsigned is expected when no keystore secret is set, and it must
+            # never be a silent fact: the artifact looks shippable and is not.
+            case "$apk" in
+              *-unsigned.apk) echo "::warning title=Unsigned build::$apk is UNSIGNED — no store will accept it, and its identity is not yours." ;;
+            esac
+          fi
+          if [ -n "$aab" ]; then
+            echo "aab=$aab" >> "$GITHUB_OUTPUT"
+            echo "AAB: $aab"
+          fi
+
+      # The AAB is what Play wants, and Play is a later, deliberate step (it
+      # needs a Play account and, on a new personal account, a 14-day closed
+      # test). Keeping it as a build artifact means the bundle exists and is
+      # downloadable the day that account is ready, without a second build.
+      #
+      # `output-metadata.json` rides along because it is AGP's own record of
+      # what this build actually produced — the version code and the output
+      # filename — which is the only thing on the run that can answer "which
+      # version is this?" without installing it.
+      - name: Upload the artifacts to this run
+{{STEP_IF}}        uses: actions/upload-artifact@v4
+        with:
+          name: {{ARTIFACT_SLUG}}-release
+          if-no-files-found: warn
+          path: |
+            {{GRADLE_DIR_PREFIX}}{{OUT_DIR}}/apk/release/*.apk
+            {{GRADLE_DIR_PREFIX}}{{OUT_DIR}}/apk/release/output-metadata.json
+            {{GRADLE_DIR_PREFIX}}{{OUT_DIR}}/bundle/release/*.aab
+
+      - name: Distribute to Firebase App Distribution testers
+{{STEP_IF}}        working-directory: {{GRADLE_DIR}}
+        env:
+          FIREBASE_SA_JSON: ${{ secrets.FIREBASE_SA_JSON }}
+          APK: ${{ steps.artifacts.outputs.apk }}
+        run: |
+          # Skip, loudly and cleanly, rather than failing: a build that is green
+          # up to the point a credential is missing is a useful build, and a
+          # confusing auth error at the END of a paid-for build is the worst
+          # possible place to learn a secret was never set.
+          if [ -z "$FIREBASE_SA_JSON" ]; then
+            echo "::notice title=Not distributed::FIREBASE_SA_JSON is not set, so the build was not sent to testers. Store it with /launchpad:doctor and run \`launchpad secrets\` to turn this step on."
+            exit 0
+          fi
+          if [ -z "$APK" ]; then
+            echo "::notice title=Not distributed::No APK was built, so there is nothing to send to testers."
+            exit 0
+          fi
+          # An APK, deliberately. Firebase App Distribution accepts an AAB only
+          # once the app is already PUBLISHED in Play and the Firebase app is
+          # linked to it — which a pre-launch app being sent to testers is, by
+          # definition, not.
+          printf '%s' "$FIREBASE_SA_JSON" > "$RUNNER_TEMP/firebase-sa.json"
+          export GOOGLE_APPLICATION_CREDENTIALS="$RUNNER_TEMP/firebase-sa.json"
+          npx --yes firebase-tools@{{FIREBASE_TOOLS_VERSION}} appdistribution:distribute "$APK" \
+            --app "{{FIREBASE_APP_ID}}" \
+            --groups "{{TESTER_GROUP}}" \
+            --release-notes "Build $(git rev-list --count HEAD) — ${GITHUB_SHA:0:7}"

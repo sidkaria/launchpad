@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>Not found — {{APP_NAME}}</title>
+<!-- This page exists so that a missing path is a 404. Without a 404.html,
+     Cloudflare Pages treats the site as a single-page app and answers EVERY
+     unknown path with index.html and a 200 — so /robots.txt, /sitemap.xml and
+     every typo "exist", each one a duplicate of the homepage to a crawler.
+     If you add client-side routes (e.g. /ig for campaign links), rewrite them
+     explicitly; do not delete this file to get them back. -->
+<style>
+  :root { color-scheme: light dark; }
+  body { font-family: -apple-system, system-ui, sans-serif; max-width: 640px; margin: 20vh auto; padding: 0 24px; line-height: 1.6; }
+</style>
+</head>
+<body>
+  <h1>Page not found</h1>
+  <p><a href="/">Back to {{APP_NAME}}</a></p>
+</body>
+</html>

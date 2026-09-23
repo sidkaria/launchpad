@@ -5,11 +5,19 @@ import { render } from '../templating.js';
 import { writeGuarded } from '../generated.js';
 const TEMPLATES_DIR = join(dirname(fileURLToPath(import.meta.url)), '..', '..', 'templates', 'payments');
 const tmpl = (n) => readFileSync(join(TEMPLATES_DIR, n), 'utf8');
+/** A Lemon Squeezy id as a Swift integer literal; anything not a positive integer means "unchecked". */
+const idOrZero = (v) => {
+    const n = typeof v === 'string' ? Number(v.trim()) : v;
+    return typeof n === 'number' && Number.isInteger(n) && n > 0 ? n : 0;
+};
 export function planPaymentsFiles(c) {
     const hasTrial = (c.trialDays ?? 0) > 0;
     const priceAmount = c.priceAmount ?? c.priceLine;
     const buyLabel = hasTrial ? `Unlock lifetime — ${priceAmount}` : 'Buy License';
-    const mgrVars = { KEYCHAIN_ACCOUNT: c.keychainAccount, GRACE_DAYS: String(c.graceDays) };
+    const mgrVars = {
+        KEYCHAIN_ACCOUNT: c.keychainAccount, GRACE_DAYS: String(c.graceDays),
+        STORE_ID: String(idOrZero(c.storeId)), PRODUCT_ID: String(idOrZero(c.productId)),
+    };
     const viewVars = {
         APP_NAME: c.appName, TAGLINE: c.tagline, PRICE_LINE: c.priceLine, CHECKOUT_URL: c.checkoutUrl,
         ACCENT_HEX: c.accentHex, BG_HEX: c.bgHex, INK_HEX: c.inkHex, HEADLINE_FONT_DESIGN: c.headlineFontDesign,

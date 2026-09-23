@@ -321,8 +321,30 @@ function pipelinesIn(dir: string, pathPrefix: string): DetectedPipeline[] {
   const foreign = (relPath: string): boolean =>
     !isLaunchpadGenerated(relPath, read(join(dir, relPath)));
 
-  if (has(join('fastlane', 'Fastfile')) && foreign('fastlane/Fastfile')) {
-    out.push({ kind: 'fastlane', path: rel('fastlane/Fastfile') });
+  /**
+   * fastlane lives in three places, and only one of them was ever looked at.
+   *
+   * `fastlane/Fastfile` is where Flutter and a native Xcode app keep it.
+   * `android/fastlane/Fastfile` is where Flutter's ANDROID lane goes — the one
+   * launchpad writes itself — and `ios/fastlane/Fastfile` is where React
+   * Native and Expo keep theirs, because that is where their own template puts
+   * it. Both of the platform-scoped spellings were invisible to detection.
+   *
+   * That was tolerable while React Native was refused. It stopped being
+   * tolerable the moment it was wired, and a real repository proved it: a
+   * pinned bare-RN template ships working `android/fastlane/Fastfile` and
+   * `ios/fastlane/Fastfile` lanes, and launchpad reported SEVEN pipelines
+   * without either of them — so `apply` would have written a second pipeline
+   * beside the one that already ships, which is the exact failure PLAYBOOK §5
+   * and the whole `disposition` mechanism exist to prevent. `writeGuarded`
+   * would have saved the Fastfiles; nothing would have saved the user from two
+   * workflows racing to release the same app.
+   */
+  for (const dir of ['', 'android', 'ios']) {
+    const relPath = dir ? `${dir}/fastlane/Fastfile` : 'fastlane/Fastfile';
+    if (has(join(...relPath.split('/'))) && foreign(relPath)) {
+      out.push({ kind: 'fastlane', path: rel(relPath) });
+    }
   }
   const sparkle = has('appcast.xml') ? 'appcast.xml' : has('create-dmg.sh') ? 'create-dmg.sh' : null;
   if (sparkle && foreign(sparkle)) out.push({ kind: 'sparkle-dmg', path: rel(sparkle) });

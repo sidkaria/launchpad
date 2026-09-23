@@ -4,13 +4,17 @@ import { join } from 'node:path';
 import { fleet, labelOf, type FleetEntry } from '../registry.js';
 import { readState } from '../state.js';
 import { requiredVaultKeys } from '../secrets.js';
-import { makeVault, detectBackend } from '../vault.js';
+import { makeVault, detectBackend, backendLabel, type VaultBackend } from '../vault.js';
+import { cliInvocation } from '../invocation.js';
 import { readBacklog, readInbox, nextTask, summarize, type Task } from '../nightshift/backlog.js';
 import { readConfig, readiness, type NightshiftConfig } from '../nightshift/config.js';
 import { readRunState, liveness, describePhase, type Liveness } from '../nightshift/runstate.js';
 import { readGroomMemory, needsDecision } from '../nightshift/groomstate.js';
 import type { TaskResult } from '../nightshift/report.js';
 import { decisionsFor, type Decision } from './decisions.js';
+import { fleetNeeds, projectNeeds, type CostLedger, type Need } from '../needs.js';
+import { readConfirmations, recordedAnswers } from '../confirmations.js';
+import { ledgerFor } from '../needs.js';
 import { detectAssets, type StoreAssets } from '../assets.js';
 import { latestTag, headCommit } from '../git.js';
 import { hueOf } from './icon.js';
@@ -207,6 +211,20 @@ export interface ProjectView extends Omit<FleetEntry, 'score'> {
   /** This project's rows from the most recent night that produced any. */
   lastNight: TaskResult[];
   lastNightDate?: string;
+  /**
+   * What this project costs, from its own decisions and its own share of the
+   * fleet-wide bills. The same shape as the fleet's, so one renderer draws both.
+   */
+  ledger: CostLedger;
+  /**
+   * Answers already given here that are not scorecard rows — a bill accepted, a
+   * one-way act acknowledged.
+   *
+   * Rendered on the Decisions tab as "you decided this on <date>". An item that
+   * vanishes from the strip and leaves no record anywhere is a button that hid a
+   * decision rather than recording one.
+   */
+  answered: { id: string; at: string; choice?: string; note?: string }[];
 }
 
 /**
@@ -237,6 +255,31 @@ export interface DashboardData {
   generated: string;
   columns: typeof GRID_COLUMNS;
   projects: ProjectView[];
+  /**
+   * Everything waiting on a person, fleet-wide, already sorted and deduped.
+   *
+   * Top-level rather than per-project because that is what it is: a credential
+   * six projects need is one thing to do, and the strip that renders this sits
+   * above the fleet and above every project page. `src/needs.ts` holds the
+   * model and the argument for each kind.
+   */
+  needs: Need[];
+  /** What the whole fleet costs, split by whose cost it is. */
+  ledger: CostLedger;
+  /**
+   * How a person runs a launchpad command in a terminal on THIS machine.
+   *
+   * The credential cards are the one place the page asks someone to type a
+   * command, and `launchpad …` is on nobody's PATH. The server knows where its
+   * own CLI is, so the page does not have to guess.
+   */
+  invocation: string;
+  /**
+   * Where credentials live on this machine, said the way `doctor` says it.
+   * The Keys tab told everyone "your OS keychain" — including every Windows
+   * machine and every file vault, where there is no keychain involved.
+   */
+  vault: { backend: VaultBackend; label: string; keychain: boolean };
   /** Fleet-wide roll-up for the number strip. */
   totals: {
     projects: number;
@@ -255,6 +298,8 @@ export interface DashboardData {
     tasksReady: number;
     tasksBlocked: number;
     inbox: number;
+    /** How many things need a human. The sidebar's count, and the strip's. */
+    needsYou: number;
   };
   /** The machine-level morning report, when there is one. */
   lastNight?: { date: string; headline: string; text: string };
@@ -332,6 +377,7 @@ export function lastNightOf(repo: string): { date?: string; results: TaskResult[
 }
 
 export function dashboardData(home = homedir(), now = new Date()): DashboardData {
+  const states = new Map<string, ReturnType<typeof readState>>();
   const projects: ProjectView[] = fleet(home).map(entry => {
     // A directory that is gone cannot be read for anything else, and probing it
     // would turn one bad row into a broken page.
@@ -341,10 +387,12 @@ export function dashboardData(home = homedir(), now = new Date()): DashboardData
         surfaces_detail: [], pipelines: [], decisions: [], secrets: [],
         accent: hueOf(labelOf(entry)), live: [],
         assets: { screenshots: 0, featureGraphic: false },
+        ledger: ledgerFor([], []), answered: [],
       };
     }
     const night = lastNightOf(entry.path);
     const st = readState(entry.path);
+    states.set(entry.path, st);
     return {
       ...entry,
       accent: hueOf(labelOf(entry)),
@@ -360,11 +408,45 @@ export function dashboardData(home = homedir(), now = new Date()): DashboardData
       nightshift: nightshiftView(entry.path),
       lastNight: night.results,
       lastNightDate: night.date,
+      ledger: ledgerFor([], []),
+      answered: safeAnswers(entry.path),
     };
   });
 
+  /**
+   * The needs list is computed over the ASSEMBLED fleet, not per project.
+   *
+   * It has to be: the merge that turns six projects wanting one App Store
+   * Connect key into a single item is a fact about the fleet, and it cannot be
+   * made by a function that has only ever seen one project.
+   */
+  const needsInput = projects
+    .filter(p => !p.problem)
+    .map(p => ({
+      path: p.path,
+      label: labelOf(p),
+      state: states.get(p.path) ?? null,
+      score: p.score,
+      secrets: p.secrets,
+      live: p.live,
+      decisions: p.decisions,
+      answered: safeConfirmations(p.path),
+    }));
+  const { items: needs, ledger } = fleetNeeds(needsInput);
+  for (const p of projects) {
+    const mine = needsInput.find(n => n.path === p.path);
+    if (!mine) continue;
+    p.ledger = ledgerFor([mine], projectNeeds(needs, p.path));
+  }
+
   const scored = projects.filter(p => p.score);
+  let backend: VaultBackend = 'file';
+  try { backend = detectBackend(process.platform); } catch { /* reported by the CLI; the page shows the file vault */ }
   return {
+    needs,
+    ledger,
+    invocation: cliInvocation(),
+    vault: { backend, label: backendLabel(backend), keychain: backend === 'keychain' || backend === 'secret-service' },
     contract: CONTRACT,
     // Named rather than inferred from whether the arrays are empty: "no
     // marketing data" and "this build has no marketing" are different answers,
@@ -395,6 +477,7 @@ export function dashboardData(home = homedir(), now = new Date()): DashboardData
       tasksReady: projects.reduce((n, p) => n + p.nightshift.counts.ready, 0),
       tasksBlocked: projects.reduce((n, p) => n + p.nightshift.counts.blocked, 0),
       inbox: projects.reduce((n, p) => n + p.nightshift.inbox.length, 0),
+      needsYou: needs.length,
     },
     lastNight: machineReport(home),
   };
@@ -484,7 +567,13 @@ export function liveTargets(repo: string, st: ReturnType<typeof readState>): Liv
     switch (s.archetype) {
       case 'ios': onTag('TestFlight'); break;
       case 'android':
-        onTag(c.firebaseAppId ? `Firebase → ${c.testerGroup || 'testers'}` : 'Play internal track'); break;
+        // Every Android pipeline launchpad writes distributes through Firebase
+        // App Distribution; none of them uploads to Play. The fallback used to
+        // read "Play internal track" — a channel no generated file can reach,
+        // quoted back in the "needs you" strip as "nothing has gone out on Play
+        // internal track yet" beside the card explaining why launchpad starts
+        // with Firebase instead.
+        onTag(`Firebase → ${c.testerGroup || 'testers'}`); break;
       case 'macos-dmg':
         onTag(c.appcastDomain ? `DMG · ${c.appcastDomain}` : 'DMG · direct download'); break;
       case 'web-app': onPush(`Vercel · ${c.prodDomain || c.rootDir || 'preview'}`); break;
@@ -493,6 +582,19 @@ export function liveTargets(repo: string, st: ReturnType<typeof readState>): Liv
     }
   }
   return out;
+}
+
+/**
+ * Both readers of `.launchpad/confirmed.yml`, wrapped so a hand-edited or
+ * unreadable file costs one row's worth of answers rather than the whole page.
+ * `readConfirmations` already degrades to `{}` on a parse error; this covers the
+ * cases it cannot, such as a directory that became unreadable mid-request.
+ */
+function safeConfirmations(repo: string): ReturnType<typeof readConfirmations> {
+  try { return readConfirmations(repo); } catch { return {}; }
+}
+function safeAnswers(repo: string): ProjectView['answered'] {
+  try { return recordedAnswers(repo); } catch { return []; }
 }
 
 function emptyNightshift(): NightshiftView {

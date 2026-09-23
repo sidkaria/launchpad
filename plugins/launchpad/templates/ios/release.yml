@@ -23,7 +23,7 @@ jobs:
           [ -n "$XC" ] && sudo xcode-select -s "$XC/Contents/Developer" || true
           xcodebuild -version
 {{FLUTTER_SETUP}}
-{{CODEGEN_STEP}}{{PREBUILD_STEP}}
+{{CODEGEN_STEP}}{{JS_SETUP_STEPS}}{{PREBUILD_STEP}}
       # Only install when missing. A self-hosted Mac usually has fastlane from
       # Homebrew, where `gem install` can fail on SIP//Library permissions or
       # silently shadow the brew copy; GitHub-hosted macOS runners ship it

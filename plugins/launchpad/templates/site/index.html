@@ -3,8 +3,13 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>{{APP_NAME}}</title>
-<style>
+<title>{{APP_NAME}} — {{TAGLINE}}</title>
+<meta name="description" content="{{TAGLINE}}">
+<meta property="og:type" content="website">
+<meta property="og:title" content="{{APP_NAME}} — {{TAGLINE}}">
+<meta property="og:description" content="{{TAGLINE}}">
+<meta name="twitter:card" content="{{TWITTER_CARD}}">
+{{HEAD_URLS}}<style>
   :root { color-scheme: light dark; }
   body { font-family: -apple-system, system-ui, sans-serif; max-width: 640px; margin: 12vh auto; padding: 0 24px; line-height: 1.6; }
   h1 { font-size: 2.5rem; margin: 0 0 .25rem; }
@@ -17,23 +22,30 @@
 <body>
   <h1>{{APP_NAME}}</h1>
   <p class="tagline">{{TAGLINE}}</p>
-  <a class="download" id="download" href="#">Download for macOS</a>
-  <p class="version" id="version"></p>
+  <!-- The href is a real download on its own: the stable "latest" DMG the release
+       workflow publishes. The script below only upgrades it to the exact versioned
+       file when the appcast can be read — which it cannot on a preview URL, on
+       localhost, or anywhere CORS on the update bucket does not name this origin. -->
+  <a class="download" id="download" data-download href="{{DOWNLOAD_URL}}">Download for macOS</a>
+  <p class="version" id="version" data-version></p>
   <section class="notes" id="notes"></section>
   <script>
     const APPCAST = "{{APPCAST_URL}}";
-    fetch(APPCAST).then(r => r.text()).then(xml => {
+    fetch(APPCAST).then(r => { if (!r.ok) throw new Error(String(r.status)); return r.text(); }).then(xml => {
       const doc = new DOMParser().parseFromString(xml, "application/xml");
+      if (doc.querySelector("parsererror")) return;
       const item = doc.querySelector("item");
       if (!item) return;
-      const url = item.querySelector("enclosure")?.getAttribute("url");
-      if (url) document.getElementById("download").href = url;
+      const encs = Array.from(item.getElementsByTagName("enclosure"));
+      const dmg = encs.find(e => /\.dmg(\?|$)/i.test(e.getAttribute("url") || "")) || encs[0];
+      const url = dmg && dmg.getAttribute("url");
+      if (url) document.querySelectorAll("[data-download]").forEach(a => a.href = url);
       const ver = item.getElementsByTagNameNS("*", "shortVersionString")[0]?.textContent
                 || item.getElementsByTagNameNS("*", "version")[0]?.textContent || "";
-      document.getElementById("version").textContent = ver ? ("Latest version " + ver) : "";
+      if (ver) document.querySelectorAll("[data-version]").forEach(e => e.textContent = "Latest version " + ver);
       const desc = item.querySelector("description")?.textContent || "";
       document.getElementById("notes").innerHTML = desc;
-    }).catch(() => {});
+    }).catch(() => { /* the static href above still downloads */ });
   </script>
 </body>
 </html>

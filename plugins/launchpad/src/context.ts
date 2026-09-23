@@ -1,7 +1,10 @@
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import type { LaunchpadState } from './types.js';
-import { signingMode, iosWorkflowSlug, type IosConfig } from './archetypes/ios.js';
+import { signingMode, iosWorkflowSlug, iosTriggerPolicy, type IosConfig } from './archetypes/ios.js';
+import { androidTriggerPolicy, type AndroidConfig } from './archetypes/android.js';
+import { macosRunsOn, type MacosConfig } from './archetypes/macos.js';
+import type { DistributeTrigger } from './archetypes/triggers.js';
 
 const START = '<!-- launchpad:start -->';
 const END = '<!-- launchpad:end -->';
@@ -193,6 +196,33 @@ export function upsertClaudeMd(repo: string, state: LaunchpadState, nightshift?:
   writeFileSync(p, next, 'utf8');
 }
 
+/**
+ * How a mobile surface actually ships, read from its trigger policy.
+ *
+ * This used to say "push to `<testBranch>` → TestFlight" for every iOS
+ * surface. A cost-tuned monorepo ships iOS on a tag only and Android on a
+ * nightly schedule, so the runbook told every reader — human or agent — a
+ * command that ships nothing. The release skill already refuses to say "push
+ * to main" without checking `distributeOn`; the generated runbook now does
+ * the same.
+ */
+export function shipLines(
+  p: { testBranch: string; tagPrefix?: string; distributeOn: DistributeTrigger[]; schedule?: string; pathFilter?: string[] },
+  where: { push: string; tag?: string },
+  workflow: string,
+): string[] {
+  const on = new Set(p.distributeOn);
+  const filter = p.pathFilter?.length ? ` (only when ${p.pathFilter.map(g => `\`${g}\``).join(', ')} changed)` : '';
+  const ways: string[] = [];
+  if (on.has('push')) ways.push(`push to \`${p.testBranch}\`${filter} → ${where.push}`);
+  if (on.has('tag') && where.tag) ways.push(`tag \`${p.tagPrefix ?? 'v'}X.Y.Z\` → ${where.tag}`);
+  if (on.has('schedule') && p.schedule) {
+    ways.push(`automatically at \`${p.schedule}\` (UTC cron) → ${where.push}, skipped when nothing changed in the last 26h`);
+  }
+  if (on.has('dispatch')) ways.push(`\`gh workflow run ${workflow}\` → ${where.push} on demand`);
+  return ways.length ? ways.map(w => `- Ship: ${w}`) : ['- Ship: no trigger is enabled for this surface'];
+}
+
 export function renderDeployment(state: LaunchpadState): string {
   const out: string[] = [
     `# ${state.project} — deployment runbook`,
@@ -208,26 +238,31 @@ export function renderDeployment(state: LaunchpadState): string {
       out.push(`- App: ${c.appName} (xcodebuild scheme \`${c.scheme}\`)`);
       out.push(`- Ship a version: \`git tag -a ${c.tagPrefix}X.Y.Z -m "notes" && git push origin ${c.tagPrefix}X.Y.Z\`  (or \`/launchpad:release\`)`);
       out.push(`- Pipeline: \`.github/workflows/launchpad-${c.scheme}-macos.yml\` (build → Developer ID sign → notarize → DMG)`);
+      out.push(`- Runs on: ${macosRunsOn(c as Pick<MacosConfig, 'architectures'>)}`);
       out.push(`- DMG + appcast → Cloudflare R2 bucket \`${c.r2Bucket}\`, served at https://${c.appcastDomain}/appcast.xml (never committed to git)`);
       if (c.payments) {
         const pay = c.payments as Record<string, any>;
         const trial = (pay.trialDays ?? 0) > 0 ? `${pay.trialDays}-day free trial → ` : '';
-        out.push(`- Licensing: ${trial}${pay.priceLine} (Lemon Squeezy, client-only; macOS Sender only)`);
+        out.push(`- Licensing: ${trial}${pay.priceLine} (Lemon Squeezy licence keys; this Mac app only — never an App Store build)`);
       }
     } else if (s.archetype === 'static-site' && c) {
       const branch = c.productionBranch ?? c.testBranch;   // back-compat with pre-rename state
       out.push(`- Source: \`${c.siteDir}/\` in this repo`);
       out.push(`- Ship: push to \`${branch}\` → Cloudflare Pages **production** (your domain); any other branch → a preview URL`);
       out.push(`- Pipeline: \`.github/workflows/launchpad-${c.appName}-site.yml\``);
-      if (c.appcastUrl) out.push(`- The download button reads ${c.appcastUrl} → auto-updates on each macOS release`);
+      if (c.appcastUrl) {
+        out.push(`- Download button: a stable \`-latest.dmg\` link, upgraded to the exact release from ${c.appcastUrl} wherever that URL's CORS allows the page's origin (previews and localhost keep the stable link)`);
+      }
     } else if (s.archetype === 'ios' && c) {
       const ios = c as unknown as IosConfig;
       const signer = signingMode(ios) === 'cloud' ? 'Xcode cloud (App Store Connect API key)' : 'fastlane match';
-      out.push(`- Ship: push to \`${c.testBranch}\` → TestFlight internal; tag \`${c.tagPrefix}X.Y.Z\` → App Store upload`);
-      out.push(`- Pipeline: \`.github/workflows/launchpad-${iosWorkflowSlug(ios)}-ios.yml\` — build → sign via ${signer} → upload`);
+      const wf = `launchpad-${iosWorkflowSlug(ios)}-ios.yml`;
+      out.push(...shipLines(iosTriggerPolicy(ios), { push: 'TestFlight internal', tag: 'App Store upload (not submitted for review)' }, wf));
+      out.push(`- Pipeline: \`.github/workflows/${wf}\` — build → sign via ${signer} → upload`);
     } else if (s.archetype === 'android' && c) {
-      out.push(`- Ship: push to \`${c.testBranch}\` → Firebase App Distribution`);
-      out.push(`- Pipeline: \`.github/workflows/launchpad-${c.appName}-android.yml\``);
+      const wf = `launchpad-${c.appName}-android.yml`;
+      out.push(...shipLines(androidTriggerPolicy(c as unknown as AndroidConfig), { push: 'Firebase App Distribution testers' }, wf));
+      out.push(`- Pipeline: \`.github/workflows/${wf}\``);
     } else if (s.archetype === 'web-app' && c) {
       out.push(`- Vercel project \`${c.project}\` (root \`${c.rootDir}\`) — preview per branch, production on main`);
     } else {
@@ -238,14 +273,23 @@ export function renderDeployment(state: LaunchpadState): string {
     out.push('', '## Existing pipelines detected (candidates for consolidation)');
     for (const p of state.pipelines) out.push(`- ${p.kind}: \`${p.path}\``);
   }
-  out.push(
-    '',
-    '## Where artifacts live (never committed to git)',
-    '- macOS DMGs + Sparkle appcast → Cloudflare R2',
-    '- iOS / Android builds → TestFlight / Firebase / Play',
-    '- Website source → `site/` in this repo (Cloudflare Pages serves it)',
-    '',
-  );
+  // Only the lines that are true of THIS repository. The footer used to list
+  // macOS/R2 and a `site/` directory for every project, including a Flutter
+  // monorepo with neither.
+  const kinds = new Set(state.surfaces.map(s => s.archetype));
+  const where: string[] = [];
+  if (kinds.has('macos-dmg')) where.push('- macOS DMGs + Sparkle appcast → Cloudflare R2');
+  if (kinds.has('ios')) where.push('- iOS builds → TestFlight / App Store Connect');
+  if (kinds.has('android')) where.push('- Android builds → Firebase App Distribution (and the run\'s artifacts)');
+  if (kinds.has('web-app')) where.push('- Web app → Vercel deployments');
+  for (const s of state.surfaces) {
+    if (s.archetype === 'static-site') {
+      const dir = (s.config as Record<string, any> | undefined)?.siteDir ?? 'site';
+      where.push(`- Website source → \`${dir}/\` in this repo (Cloudflare Pages serves it)`);
+    }
+  }
+  if (where.length) out.push('', '## Where artifacts live (never committed to git)', ...where);
+  out.push('');
   return out.join('\n');
 }
 

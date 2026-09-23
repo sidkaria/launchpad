@@ -111,7 +111,9 @@ export function renderUpdate(c) {
         case 'ahead':
             return `launchpad ${c.version} — newer than the published release. This is a dev build.`;
         case 'unknown':
-            return `launchpad: could not check for updates (${c.why}).\n`
+            // `fetch failed` is Node talking, not a reason a person can act on.
+            return `launchpad: could not check for updates (${/fetch failed|ECONNREFUSED|ENOTFOUND|EAI_AGAIN|network/i.test(c.why) ? 'no connection'
+                : /abort|timeout/i.test(c.why) ? 'no answer in time' : c.why}).\n`
                 + '  Nothing is wrong with your install; the check simply did not reach anywhere.';
         case 'behind': {
             const out = [
@@ -137,6 +139,8 @@ export function renderUpdate(c) {
     }
 }
 export const realFetcher = async (url) => {
-    const res = await fetch(url, { headers: { accept: 'application/json' } });
+    // Bounded: a manifest host that accepts the connection and never answers
+    // used to hold `update` open indefinitely.
+    const res = await fetch(url, { headers: { accept: 'application/json' }, signal: AbortSignal.timeout(8_000) });
     return { ok: res.ok, status: res.status, json: () => res.json() };
 };

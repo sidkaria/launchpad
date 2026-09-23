@@ -7,7 +7,7 @@ import { parse } from 'yaml';
 import { detect } from './detect.js';
 import { detectEcosystem } from './ecosystem.js';
 import { currentBranch, defaultBranch, hasReleaseTag, isRepo } from './git.js';
-import { entitlement, readLicense } from './license.js';
+import { entitlement, licenceWord, readLicense } from './license.js';
 import { hostSupport } from './platform.js';
 import { provenance } from './provenance.js';
 import { scorecard } from './scorecard.js';
@@ -48,8 +48,12 @@ export const realProbe = (bin, args) => {
         if (r.error)
             return null;
         // `java -version` exits 0 and prints to stderr, so both streams are read.
-        const text = `${r.stdout ?? ''}${r.stderr ?? ''}`;
-        const line = text.split('\n').map(l => l.trim()).find(Boolean);
+        // Colour codes stripped, and the first line that carries a version wins:
+        // fastlane opens with "fastlane installation at path:" and a locale
+        // warning, and its version is five lines down.
+        const text = `${r.stdout ?? ''}${r.stderr ?? ''}`.replace(/\u001b\[[0-9;]*m/g, '');
+        const lines = text.split('\n').map(l => l.trim()).filter(Boolean);
+        const line = lines.find(l => /\d+\.\d+/.test(l) && !/^\//.test(l) && !/WARNING/i.test(l)) ?? lines[0];
         return line ?? null;
     }
     catch {
@@ -126,18 +130,12 @@ function tailLogs(repo, home, lines) {
     return out;
 }
 /**
- * Entitlement as one word.
- *
- * `stale` is reported as **grace** rather than as its internal name, because
- * "stale" reads like a problem and it is not one: the key is fully valid and
- * has simply not been re-checked lately. `lapsed` is kept as its own word
- * rather than folded into `unlicensed` — a bundle that cannot say "the provider
- * is actively rejecting this key" hides the one licence fact support needs, and
- * the two call for opposite replies.
+ * Entitlement as one word — `licenceWord` in license.ts, so `report` and
+ * `license` can never call one key two things. `lapsed` is kept as its own
+ * word rather than folded into `unlicensed`: a bundle that cannot say "the
+ * provider is actively rejecting this key" hides the one licence fact support
+ * needs, and the two call for opposite replies.
  */
-function licenceWord(state) {
-    return state === 'stale' ? 'grace' : state;
-}
 export function buildReport(deps) {
     const home = deps.home ?? launchpadHome();
     const now = deps.now ?? new Date();

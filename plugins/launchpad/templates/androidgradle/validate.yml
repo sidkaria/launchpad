@@ -1,0 +1,27 @@
+name: Validate {{APP_NAME}} (Android)
+
+on:
+{{ON_TRIGGERS}}
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    # ubuntu, deliberately: lint and unit tests never need macOS, and a macOS
+    # runner bills ~10x an ubuntu one. This lane ships NOTHING and reads no
+    # secret, which is what makes it safe to run on every push.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+{{NODE_STEPS}}{{PREBUILD_STEP}}      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: '{{JAVA_VERSION}}'
+
+      - uses: gradle/actions/setup-gradle@v6
+        with:
+          validate-wrappers: true
+
+{{VALIDATE_STEPS}}

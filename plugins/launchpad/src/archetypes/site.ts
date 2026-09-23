@@ -12,6 +12,28 @@ export interface SiteConfig {
   pagesProject: string;  // Cloudflare Pages project name
   appcastUrl: string;    // '' if the project has no macOS appcast (no landing page generated)
   tagline: string;
+  /**
+   * The site's public origin, e.g. `https://example.com/`. Optional. When set,
+   * the scaffold gets a canonical link, `og:url`, and a `sitemap.xml` that
+   * `robots.txt` points at — all of which must be ABSOLUTE to mean anything.
+   * Unset → those lines are omitted rather than written relative.
+   */
+  siteUrl?: string;
+  /**
+   * The share image (1200×630 is what every major unfurler expects). Absolute
+   * URL, or a path under the site resolved against `siteUrl`. Optional: with
+   * neither it is omitted, because X, Slack and iMessage do not resolve a
+   * relative `og:image` — a shipped site had one for months and no link it
+   * posted ever showed a picture.
+   */
+  ogImage?: string;
+  /**
+   * Where the download button points before (and if) the appcast is read.
+   * Unset → `<appcast dir>/<appName>-latest.dmg`, the stable alias the macOS
+   * release workflow publishes. Set it when the Mac app's name differs from the
+   * site's `appName`, or the DMGs live somewhere else.
+   */
+  downloadUrl?: string;
 }
 
 export interface GeneratedFile { path: string; contents: string; }
@@ -42,6 +64,81 @@ export function sitePathsFilter(siteDir: string): string {
   return glob ? `    paths:\n      - '${glob}'\n` : '';
 }
 
+/** Text and attribute values in the scaffold: a tagline with `&` or `"` is not markup. */
+const esc = (s: string): string =>
+  s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+
+/** `https://x.com` and `https://x.com/` are the same origin; paths join onto it with one slash. */
+const originOf = (u: string): string => (u.trim() ? u.trim().replace(/\/+$/, '') + '/' : '');
+
+/**
+ * The download button's href when JavaScript never runs or the appcast cannot
+ * be read. See `SiteConfig.downloadUrl`.
+ */
+export function siteDownloadUrl(c: SiteConfig): string {
+  if (c.downloadUrl?.trim()) return c.downloadUrl.trim();
+  const dir = c.appcastUrl.replace(/[^/]*$/, '');
+  return `${dir}${encodeURIComponent(c.appName)}-latest.dmg`;
+}
+
+/** The share image as an absolute URL, or '' when it cannot be made one. */
+export function siteOgImage(c: SiteConfig): string {
+  const img = c.ogImage?.trim() ?? '';
+  if (!img) return '';
+  if (/^https?:\/\//i.test(img)) return img;
+  const origin = originOf(c.siteUrl ?? '');
+  return origin ? origin + img.replace(/^\.?\/+/, '') : '';
+}
+
+/**
+ * The `<head>` lines that are only true with an absolute URL behind them. Each
+ * ends with a newline so the empty case collapses to nothing.
+ */
+function headUrls(c: SiteConfig): string {
+  const lines: string[] = [];
+  const origin = originOf(c.siteUrl ?? '');
+  if (origin) {
+    lines.push(`<link rel="canonical" href="${esc(origin)}">`, `<meta property="og:url" content="${esc(origin)}">`);
+  }
+  const img = siteOgImage(c);
+  if (img) {
+    lines.push(`<meta property="og:image" content="${esc(img)}">`, `<meta name="twitter:image" content="${esc(img)}">`);
+  }
+  return lines.map(l => `${l}\n`).join('');
+}
+
+/**
+ * `robots.txt` for the scaffold. Without one — and without a 404.html — Pages
+ * answers `/robots.txt` with the homepage and a 200, which is what two shipped
+ * sites were doing when they were checked.
+ */
+export function siteRobots(c: SiteConfig): string {
+  const origin = originOf(c.siteUrl ?? '');
+  return ['User-agent: *', 'Allow: /', ...(origin ? ['', `Sitemap: ${origin}sitemap.xml`] : []), ''].join('\n');
+}
+
+function siteSitemap(origin: string): string {
+  return [
+    '<?xml version="1.0" encoding="UTF-8"?>',
+    '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">',
+    `  <url><loc>${esc(origin)}</loc></url>`,
+    '</urlset>',
+    '',
+  ].join('\n');
+}
+
+/**
+ * Files that are scaffolding: written once into a site that has no page yet,
+ * never regenerated, and never added to a site that already exists.
+ *
+ * HTML cannot carry a stamp (see `stampLine`), so once one of these exists
+ * launchpad cannot tell its own scaffold from a page somebody built. And the
+ * 404 in particular changes routing: an existing site may rely on Pages'
+ * serve-index-for-everything fallback for campaign paths like `/ig`, and
+ * adding a 404.html there would quietly turn those into dead links.
+ */
+const SCAFFOLD = /(^|\/)(index\.html|404\.html|robots\.txt|sitemap\.xml)$/;
+
 export function planSiteFiles(c: SiteConfig): GeneratedFile[] {
   // `wrangler pages deploy <dir>` wants the root as `.`, not as the empty
   // string — the deploy target and the path filter normalise differently.
@@ -55,10 +152,21 @@ export function planSiteFiles(c: SiteConfig): GeneratedFile[] {
     { path: `.github/workflows/launchpad-${c.appName}-site.yml`, contents: render(tmpl('release.yml'), wfVars) },
   ];
   if (c.appcastUrl) {
-    files.push({
-      path: underDir(c.siteDir, 'index.html'),
-      contents: render(tmpl('index.html'), { APP_NAME: c.appName, TAGLINE: c.tagline, APPCAST_URL: c.appcastUrl }),
-    });
+    const img = siteOgImage(c);
+    files.push(
+      {
+        path: underDir(c.siteDir, 'index.html'),
+        contents: render(tmpl('index.html'), {
+          APP_NAME: esc(c.appName), TAGLINE: esc(c.tagline), APPCAST_URL: c.appcastUrl,
+          DOWNLOAD_URL: esc(siteDownloadUrl(c)), HEAD_URLS: headUrls(c),
+          TWITTER_CARD: img ? 'summary_large_image' : 'summary',
+        }),
+      },
+      { path: underDir(c.siteDir, '404.html'), contents: render(tmpl('404.html'), { APP_NAME: esc(c.appName) }) },
+      { path: underDir(c.siteDir, 'robots.txt'), contents: siteRobots(c) },
+    );
+    const origin = originOf(c.siteUrl ?? '');
+    if (origin) files.push({ path: underDir(c.siteDir, 'sitemap.xml'), contents: siteSitemap(origin) });
   }
   return files;
 }
@@ -73,7 +181,9 @@ export function planSiteFiles(c: SiteConfig): GeneratedFile[] {
  * no stamp, no `edited` category, and a hand-added `fetch-depth: 0` reverted
  * without a word (harness/FINDINGS.md F-05).
  *
- * `index.html` is the one deliberate exception, and it is a *stricter* guard
+ * The scaffold (`index.html`, `404.html`, `robots.txt`, `sitemap.xml` — see
+ * `SCAFFOLD`) is written only into a site with no `index.html` yet, and each
+ * file only if absent. `index.html` is the case that set the rule, and it is a *stricter* guard
  * rather than a weaker one: HTML has no safe universal comment form, so
  * `writeGuarded` can never stamp it (see `stampLine`), which means once it
  * exists launchpad cannot distinguish its own scaffold from the themed page a
@@ -83,8 +193,9 @@ export function planSiteFiles(c: SiteConfig): GeneratedFile[] {
  * would read as launchpad's own and be overwritten.
  */
 export function writeSiteFiles(repo: string, c: SiteConfig): WriteResult {
+  const siteExists = existsSync(join(repo, underDir(c.siteDir, 'index.html')));
   const files = planSiteFiles(c).filter(
-    f => !(f.path.endsWith('index.html') && existsSync(join(repo, f.path))),
+    f => !(SCAFFOLD.test(f.path) && (siteExists || existsSync(join(repo, f.path)))),
   );
   return writeGuarded(repo, files);
 }

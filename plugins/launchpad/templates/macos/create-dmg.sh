@@ -20,7 +20,7 @@ APPLE_APP_PASSWORD="${APPLE_APP_PASSWORD:-}"
 echo "Building ${APP_NAME} (${SCHEME})..."
 xcodebuild -project "${XCODEPROJ}" -scheme "${SCHEME}" -configuration Release \
   -derivedDataPath ./build -skipMacroValidation \
-  CODE_SIGN_IDENTITY="" CODE_SIGNING_REQUIRED=NO CODE_SIGNING_ALLOWED=NO
+  CODE_SIGN_IDENTITY="" CODE_SIGNING_REQUIRED=NO CODE_SIGNING_ALLOWED=NO{{ARCH_FLAGS}}
 
 APP_PATH="./build/Build/Products/Release/${APP_NAME}.app"
 [ -d "${APP_PATH}" ] || { echo "Build failed - ${APP_PATH} not found"; exit 1; }
@@ -59,6 +59,19 @@ fi
 
 echo "Verifying signature..."
 codesign -dvvv "${APP_PATH}"
+
+# Say what this build actually runs on. A shipped app's landing page promised
+# "Apple silicon & Intel" for months while every DMG was arm64-only — the appcast
+# even recorded it — because nothing ever printed it. Copy about hardware is a
+# claim; this line is the evidence for it.
+EXE="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "${APP_PATH}/Contents/Info.plist" 2>/dev/null || true)"
+if [ -n "${EXE}" ] && [ -f "${APP_PATH}/Contents/MacOS/${EXE}" ]; then
+  ARCHS="$(lipo -archs "${APP_PATH}/Contents/MacOS/${EXE}" 2>/dev/null || echo unknown)"
+  echo "Architectures: ${ARCHS}"{{ARCH_CHECK}}
+  if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
+    echo "**${APP_NAME} ${VERSION}** runs on: \`${ARCHS}\`" >> "${GITHUB_STEP_SUMMARY}"
+  fi
+fi
 
 # Notarize + staple the .app BEFORE building the DMG, so the DMG ships a STAPLED
 # app. A stapled app launches cleanly even offline — end users never hit a

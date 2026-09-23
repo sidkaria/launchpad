@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import { launchpadHome } from './home.js';
 import { join, resolve } from 'node:path';
 import { readStateOrError } from './state.js';
@@ -25,11 +25,32 @@ export function writeRegistry(reg, home = launchpadHome()) {
     mkdirSync(join(home, '.launchpad'), { recursive: true });
     writeFileSync(p, JSON.stringify(reg, null, 2) + '\n', 'utf8');
 }
-/** Idempotent: re-adding a known project is a no-op, not a duplicate. */
+/**
+ * A project's identity is its REAL path.
+ *
+ * `resolve()` alone let one repository register twice: on macOS `$TMPDIR` is
+ * `/var/folders/…` and `/var` is a symlink to `/private/var`, so `setup` (which
+ * sees `process.cwd()`, already resolved by the kernel) and `add <path>` (which
+ * sees whatever the user typed) filed the same directory under two spellings.
+ * The fleet then showed every project twice, every twin-basename qualifier
+ * fired, and the rubric had 60 columns for 30 apps. Same class of bug as the
+ * harness's own F-11, one layer down.
+ */
+export function projectIdentity(repo) {
+    const abs = resolve(repo);
+    try {
+        return realpathSync.native(abs);
+    }
+    catch {
+        return abs;
+    }
+}
+/** Idempotent: re-adding a known project — under any spelling of its path — is a no-op. */
 export function addProject(repo, home = launchpadHome(), now = new Date()) {
     const path = resolve(repo);
+    const identity = projectIdentity(repo);
     const reg = readRegistry(home);
-    if (!reg.projects.some(e => e.path === path)) {
+    if (!reg.projects.some(e => projectIdentity(e.path) === identity)) {
         reg.projects.push({ path, added: now.toISOString() });
         reg.projects.sort((a, b) => a.path.localeCompare(b.path));
         writeRegistry(reg, home);
@@ -37,9 +58,9 @@ export function addProject(repo, home = launchpadHome(), now = new Date()) {
     return reg;
 }
 export function removeProject(repo, home = launchpadHome()) {
-    const path = resolve(repo);
+    const path = projectIdentity(repo);
     const reg = readRegistry(home);
-    reg.projects = reg.projects.filter(e => e.path !== path);
+    reg.projects = reg.projects.filter(e => projectIdentity(e.path) !== path);
     writeRegistry(reg, home);
     return reg;
 }

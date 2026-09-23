@@ -1,10 +1,12 @@
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
+import { parse as parseYaml } from 'yaml';
 import type { LaunchpadState, Surface, Archetype } from './types.js';
 import { detectAssets, hasStoreSurface, ICON_REQUIREMENT } from './assets.js';
 import type { MacosConfig } from './archetypes/macos.js';
 import type { IosConfig } from './archetypes/ios.js';
-import type { AndroidConfig } from './archetypes/android.js';
+import { androidFramework, type AndroidConfig } from './archetypes/android.js';
+import { appBuildFile, releaseSigning } from './archetypes/androidsigning.js';
 import type { SiteConfig } from './archetypes/site.js';
 import { readConfirmations } from './confirmations.js';
 import { detectEcosystem, installPhrase, article, type Ecosystem } from './ecosystem.js';
@@ -122,7 +124,122 @@ function deliveryPhrase(kinds: Set<Archetype>): string {
 const configOf = <T>(st: LaunchpadState, a: Archetype): T | undefined =>
   st.surfaces.find(s => s.archetype === a && s.config)?.config as T | undefined;
 
+/**
+ * The Android app module's build file, whatever the project is built with.
+ *
+ * This used to look only where Flutter puts one — `android/app/build.gradle`,
+ * optionally under a workdir — which meant the `android-signing` row graded a
+ * NATIVE Android app against a file that does not exist there, read '', and
+ * reported the gap correctly by accident. The accident stopped being harmless
+ * the moment `apply` began wiring those apps: having wired real release
+ * signing into `app/build.gradle.kts`, the scorecard went on reporting the app
+ * as debug-signed, which is the false-GAP twin of the false pass — it tells the
+ * buyer the product's own work did not happen.
+ *
+ * `appBuildFile` is the same resolver `apply` writes through, so the row and
+ * the wiring cannot disagree about which file is the app's. The Flutter
+ * spellings stay as a fallback for a state file with no framework recorded.
+ */
+function androidBuildFile(repo: string, st: LaunchpadState): { text: string; path?: string } {
+  const surface = st.surfaces.find(s => s.archetype === 'android');
+  const cfg = {
+    ...(configOf<AndroidConfig>(st, 'android') ?? {}),
+    framework: androidFramework(configOf<AndroidConfig>(st, 'android'), surface),
+  } as AndroidConfig;
+  const resolved = appBuildFile(repo, cfg);
+  if (resolved) return { text: read(repo, resolved), path: resolved };
+  const workdir = cfg.workdir ?? '.';
+  const under = workdir === '.' ? '' : `${workdir}/`;
+  for (const rel of [
+    `${under}android/app/build.gradle.kts`, `${under}android/app/build.gradle`,
+    'android/app/build.gradle.kts', 'android/app/build.gradle',
+  ]) {
+    const text = read(repo, rel);
+    if (text) return { text, path: rel };
+  }
+  return { text: '' };
+}
+
 const anyOf = (repo: string, files: string[]) => files.some(f => has(repo, f));
+
+/**
+ * Packages whose whole job is talking to a server. A dependency is evidence
+ * the release build will try; the absence of one is not evidence it will not
+ * (`dart:io`'s HttpClient needs no package), which is why that case is
+ * `unknown` rather than a pass.
+ */
+const FLUTTER_NETWORK_DEP = /^(http|dio|grpc|chopper|retrofit|ferry|socket_io_client|cached_network_image|supabase|supabase_flutter|firebase_core|appwrite|pocketbase|web_socket_channel)$|graphql|websocket|^http_|_http$/;
+const INTERNET_LINE = '<uses-permission android:name="android.permission.INTERNET" />';
+
+/**
+ * A Flutter release build that cannot reach the network.
+ *
+ * Flutter's template declares `INTERNET` in `src/debug` and `src/profile`
+ * only, so everything works in development and a release APK then fails every
+ * request with "Failed host lookup … errno = 7" — which reads like a wrong
+ * server URL, and was chased as one in a shipped app before anybody looked at
+ * the manifest (docs/HARVEST.md).
+ *
+ * Reported, never fixed: DECISIONS 2026-09-22 — the manifest is the user's
+ * file, and not every app should ask for the network. One row for all the
+ * Android surfaces: `n/a` for one that is not Flutter (native, React Native
+ * and Expo templates put the permission in `src/main` themselves), the worst
+ * grade among the Flutter ones otherwise.
+ */
+function flutterNetworkPermission(repo: string, st: LaunchpadState): Check {
+  const base = { id: 'flutter-network-permission', title: 'The Flutter release build can reach the network' };
+  const results: Array<Pick<Check, 'grade' | 'detail'>> = [];
+  for (const s of st.surfaces.filter(x => x.archetype === 'android')) {
+    const cfg = s.config as Partial<AndroidConfig> | undefined;
+    if (androidFramework(cfg, s) !== 'flutter') continue;
+    // The app dir: the configured one, else where detection found it, else the root.
+    const dirs = [...new Set([cfg?.workdir, s.target, '.'].filter((d): d is string => typeof d === 'string' && !!d))];
+    const under = (d: string, rel: string) => (d === '.' ? rel : `${d}/${rel}`);
+    const dir = dirs.find(d => has(repo, under(d, 'pubspec.yaml')));
+    const manifestRel = dir && under(dir, 'android/app/src/main/AndroidManifest.xml');
+    const manifest = manifestRel ? read(repo, manifestRel) : '';
+    if (!manifestRel || !manifest) {
+      results.push({
+        grade: 'unknown',
+        detail: 'launchpad could not find this Flutter app\'s `android/app/src/main/AndroidManifest.xml`, so it '
+          + 'cannot tell whether the RELEASE build may use the network. Flutter\'s template grants it only to '
+          + 'debug and profile builds; a release that talks to a server without it fails every request with '
+          + '"Failed host lookup", which looks like a wrong URL.',
+      });
+      continue;
+    }
+    const uncommented = manifest.replace(/<!--[\s\S]*?-->/g, '');
+    if (/<uses-permission\b[^>]*android\.permission\.INTERNET\b/.test(uncommented)) {
+      results.push({ grade: 'ok', detail: '' });
+      continue;
+    }
+    let deps: string[] = [];
+    try {
+      const doc = parseYaml(read(repo, under(dir!, 'pubspec.yaml'))) as { dependencies?: Record<string, unknown> } | null;
+      deps = Object.keys(doc?.dependencies ?? {});
+    } catch { /* unparseable pubspec: no evidence either way */ }
+    const net = deps.filter(d => FLUTTER_NETWORK_DEP.test(d));
+    const fix = `Add \`${INTERNET_LINE}\` to \`${manifestRel}\`, inside \`<manifest>\` and above \`<application>\`.`;
+    results.push(net.length
+      ? {
+        grade: 'gap',
+        detail: `\`${manifestRel}\` does not ask for the network, and this app depends on `
+          + `${net.slice(0, 3).map(d => `\`${d}\``).join(', ')}${net.length > 3 ? ` and ${net.length - 3} more` : ''}. `
+          + 'Flutter grants it only to debug and profile builds, so everything works while you develop and the '
+          + 'RELEASE build fails every request with "Failed host lookup … errno = 7" — which reads like a wrong '
+          + `server URL, not a missing line. ${fix}`,
+      }
+      : {
+        grade: 'unknown',
+        detail: `\`${manifestRel}\` does not ask for the network, and nothing in \`pubspec.yaml\` says this app `
+          + 'uses it — but plain `dart:io` needs no package, so launchpad cannot tell. If the release build talks '
+          + `to any server it will fail with "Failed host lookup", which reads like a wrong URL. ${fix} If the `
+          + 'app is genuinely offline, that is the right manifest as it stands.',
+      });
+  }
+  const worst = results.find(r => r.grade === 'gap') ?? results.find(r => r.grade === 'unknown') ?? results[0];
+  return { ...base, ...(worst ?? { grade: 'n/a' as Grade, detail: '' }) };
+}
 
 const SKIP_DIRS = new Set([
   'node_modules', '.git', 'build', 'dist', '.next', '.dart_tool', 'Pods',
@@ -345,15 +462,29 @@ export function scorecard(repo: string, st: LaunchpadState): Scorecard {
 
   // ── 3-5. signing, by platform ─────────────────────────────────────────────
   if (kinds.has('android')) {
-    const gradle = read(repo, 'android/app/build.gradle.kts') || read(repo, 'android/app/build.gradle')
-      || read(repo, `${(configOf<AndroidConfig>(st, 'android')?.workdir ?? '.')}/android/app/build.gradle.kts`);
-    add({
-      id: 'android-signing', title: 'Android release is signed with a real key',
-      ...grade(/signingConfigs[\s\S]*release/.test(gradle),
-        'A stock Flutter or Android project signs its RELEASE build with the DEBUG keystore. ' +
-        'The output looks shippable, no store will accept it, and its identity changes per ' +
-        'machine. This is the most common silent blocker for a first Android release.', true),
-    });
+    const { text: gradleText, path: gradlePath } = androidBuildFile(repo, st);
+    const verdict = gradleText
+      ? releaseSigning(gradleText, gradlePath?.endsWith('.kts') === false ? 'groovy' : 'kotlin')
+      : 'none';
+    add(verdict === 'declared'
+      ? {
+        id: 'android-signing', title: 'Android release is signed with a real key',
+        grade: 'unknown',
+        detail:
+          `${gradlePath} names a signing config for the release build and never gives it a ` +
+          'keystore, so something outside the build file is expected to — your own lane, or an ' +
+          'environment variable. That may be exactly right, and launchpad cannot see it from ' +
+          'here. Check that a release build off a clean clone is actually signed.',
+        critical: true,
+      }
+      : {
+        id: 'android-signing', title: 'Android release is signed with a real key',
+        ...grade(verdict === 'signed',
+          'A stock Flutter or Android project signs its RELEASE build with the DEBUG keystore. ' +
+          'The output looks shippable, no store will accept it, and its identity changes per ' +
+          'machine. This is the most common silent blocker for a first Android release.', true),
+      });
+    add(flutterNetworkPermission(repo, st));
     add({
       id: 'keystore-backup', title: 'Upload keystore is backed up',
       grade: 'unknown',
@@ -587,7 +718,23 @@ export function scorecard(repo: string, st: LaunchpadState): Scorecard {
    * and a tool that says four confidently wrong things has spent the credit it
    * needed for the two right ones.
    */
-  const hasLegal = findDoc(repo, /^(privacy|terms)/i);
+  /**
+   * A privacy POLICY, not Apple's privacy MANIFEST.
+   *
+   * `PrivacyInfo.xcprivacy` is a required Xcode resource declaring which
+   * system APIs an app calls and why. It is not a document, it is not
+   * publishable, and it satisfies nothing App Review asks for on the policy
+   * front — but it is named `Privacy…`, so `^(privacy|terms)` matched it.
+   *
+   * That was harmless while React Native was refused. It stopped being
+   * harmless the moment React Native and Expo shipped, because RN's own
+   * template has included that file by default since 0.73: **every** React
+   * Native app would have been told it has a privacy policy when it does not,
+   * on a row whose whole point is that its absence is a rejection rather than
+   * a nag. Caught by eye reading a real fixture's scorecard before baselining
+   * it, which is the only reason it did not become the snapshot.
+   */
+  const hasLegal = findDoc(repo, /^(privacy|terms)(?!info\b)(?!.*\.xcprivacy$)/i);
   add({
     id: 'legal', title: 'Privacy policy and terms exist',
     grade: hasLegal ? 'ok' : needsStore ? 'gap' : 'unknown',

@@ -36,6 +36,8 @@ description: Mission Control — every app the user owns on one screen, with rea
 <!-- /launchpad:standing-rules -->
 
 ```bash
+node "${CLAUDE_PLUGIN_ROOT}/dist/cli/index.js" needs                  # the same "needs you" list, in a terminal
+node "${CLAUDE_PLUGIN_ROOT}/dist/cli/index.js" needs --json           # …as data
 node "${CLAUDE_PLUGIN_ROOT}/dist/cli/index.js" dashboard              # start it and open a browser
 node "${CLAUDE_PLUGIN_ROOT}/dist/cli/index.js" dashboard --no-open    # start it, print the URL only
 node "${CLAUDE_PLUGIN_ROOT}/dist/cli/index.js" dashboard --port=5000  # a different port
@@ -47,7 +49,46 @@ It serves on `127.0.0.1:4747` and runs until Ctrl-C. Start it in a background sh
 
 ## What it is
 
-A **side navigation panel listing every onboarded project**, and — when you pick one — everything about that project in one place. The fleet is the overview; the project is the unit of work.
+A **"needs you" strip across the top of every view**, a **side navigation panel listing every onboarded project**, and — when you pick one — everything about that project in one place. The fleet is the overview; the project is the unit of work.
+
+### Needs you — the strip above everything
+
+Fleet-wide, persistent, and the first thing on the screen on every view. One line when there is nothing — *"Nothing needs you"* — and grouped cards when there is. `launchpad needs` prints exactly the same list in a terminal, and `--json` gives it as data; the model is `src/needs.ts` and both renderers read it rather than composing their own.
+
+Every fact in it already existed somewhere in this product: a missing vault key on the Credentials tab, a `?` row on the scorecard, a cost chip on Decisions, a pipeline with no disposition in `state.yml`, a surface `apply` refuses. **Seven places to look is the same as none** — the thing blocking somebody's first Android build sat three clicks inside a project page, indistinguishable from twelve things that were fine.
+
+Two rules govern what may appear, and they are not negotiable:
+
+- **Never an item the code cannot justify.** Each one is derived from something observable. Nothing is there because it is generally good advice — a list with one speculative row is a list people learn to skim, and skimming takes the row that mattered down with it.
+- **Never a question the code can answer itself.** A fully wired, fully credentialed project produces an empty strip; a unit test asserts exactly that. We decide the stack, so a finished project is a quiet one.
+
+Four groups, in the order a first-time shipper actually needs them — **blocks a release**, then **costs money**, then **cannot be undone**, then **only you can answer**. That split is the 2026-08-02 resolution ("split on reversibility, not on stage") plus the question bank's standing confirmations, rendered.
+
+| Kind | Raised by | The one action |
+|---|---|---|
+| `paste-credential` | a **credential set** with at least one key missing — one card per trip to a portal or per command, not per vault key | **Add it**: the keys the set produces with their presence, where to click once, and a `launchpad secret set <key>` per missing one, spelled with the CLI's real path so it pastes into a terminal |
+| `confirm` | a scorecard row marked `answerable` | the existing confirm flow, in place |
+| `decide-money` | a config field with a bill attached (hosted macOS runners) | accept or decline, with the default and the number |
+| `acknowledge-irreversible` | a channel nothing has gone out on, a keystore about to be generated, a domain about to be pointed | acknowledged, and dated |
+| `keep-or-migrate` | a detected pipeline with no disposition | keep it — which writes `leave-alone` into `state.yml`, because `apply` branches on that and on nothing else |
+| `store-gate` | Play's $25 and its 14-day/12-tester gate, Apple's $99/yr, Vercel Hobby → Pro once there is a paywall in the repo | noted, once, for the whole account |
+| `refused-surface` | the archetype's own refusal logic — never a list kept here, so it disappears by itself the day the pipeline exists | what you still get |
+
+**A card is an act, not a vault key.** The Android upload keystore is four vault keys and one `keytool` invocation launchpad performs itself; the App Store Connect key is three values off one screen; Cloudflare is a token and an account id from one dashboard. Grouped by key it read as twenty jobs to somebody who had eight things to do, and a count that is not a count of decisions makes a list look hopeless. So each card lists the keys it covers, states how far along it is (*"2 of 4 stored"*), and says whether launchpad generates it or the user fetches it — the keystore card has to say launchpad makes it, because the next thing it has to say is the backup warning. `needs --json` carries both the set and its keys. The grouping is `CREDENTIAL_SETS` in `src/needs.ts`, keyed by secret name; it belongs beside `SECRET_CATALOGUE` in `src/secrets.ts` and should move there. A key no set claims still gets a card of its own, and a test fails if a catalogue secret is unplaced.
+
+**Every button is an action in two words or fewer** — Add it · It's handled · Accept · Understood · Keep it · Noted · See why. Never "Get the key": that is the landing page's purchase wording, and on a card about a credential the user already owns it reads as an upsell.
+
+**Account-wide items are asked once.** Six projects wanting one App Store Connect key is one thing to do; printing it six times is the fastest way to teach somebody that the strip is noise. An account-wide answer is only spent once every project it applies to has it.
+
+**There is no field for a credential value anywhere on this page, and there is not going to be one.** A value typed into a browser is in the DOM, in the browser's memory and one autofill away from a password manager that thinks it is a login form. The card shows the command — `secret set`, which prompts without echoing or reads a piped file, with the CLI's real path because nobody has `launchpad` on their PATH — and the value goes from a terminal straight into the vault. (`launchpad secret <key>` without `set` READS a credential; the cards used to offer that one, which only answers "not in the vault".)
+
+**Every answer is recorded, dated, and reachable.** Acknowledgements go into the repo's own `.launchpad/confirmed.yml` under namespaced ids (`money:`, `gate:`, `irreversible:`, `keep:`) and render on the Decisions tab as *"you decided this on <date>"*. A button that makes an item vanish and leaves no record has hidden a decision rather than recorded one. The namespace is what keeps them out of the scorecard's way: nothing written there can turn a `gap` green, because the scorecard never reads those ids.
+
+### Cost — what this will actually cost them
+
+A **ledger**, on the fleet view as a card and on every project page as a chip that opens the breakdown. Totals per month, per year and one-off, split three ways: **unavoidable** (the platform charges it), **launchpad's choice** (a consequence of a decision on the Decisions tab, and therefore reversible by reversing that decision), and **optional**.
+
+Every number in it is a decision's own cost chip, structured. Two things are deliberately *not* totalled and are listed instead: a **metered** cost, which has no number anybody can stand behind — inventing a monthly figure for a runner bill would put a guess on the one line a buyer quotes — and a **conditional** one, such as Vercel Pro on a site with nothing to buy on it yet. When a condition comes true the matching `store-gate` item charges it, once, so one $20 per seat per month subscription is never counted twice.
 
 **All projects** — a fleet readiness ring, per-project cards with a readiness meter and the last thing each shipped, a **what's live where** panel, then the full rubric grid.
 
@@ -63,7 +104,7 @@ The cards carry a **meter**, not a row of per-check dots. The dots said which ch
 | Build & Release | every detected surface, why it was detected, its full gathered config |
 | **Decisions** | every choice launchpad made **and the reason** |
 | Roadmap | capture → backlog → who runs it → what happened |
-| Keys | which credentials this project needs and which are present — never values |
+| Credentials | which credentials this project needs and which are present — never values |
 | Marketing | a visibly empty "coming" slot |
 
 ### Roadmap: the backlog is the roadmap, Nightshift is one executor
@@ -173,6 +214,8 @@ Everything that writes is a **queue or list action**, never a repo action:
 
 | Write | What it does |
 |---|---|
+| Answer a "needs you" item | a dated line in that repo's `.launchpad/confirmed.yml`, under a namespaced id |
+| Keep an existing pipeline | `disposition: leave-alone` on that pipeline in `.launchpad/state.yml` — the one write that touches state, and it earns it, because `apply` branches on that field and on nothing else |
 | Capture an idea | a line in the inbox, for grooming to shape |
 | Add a task | straight into the queue, skipping grooming |
 | Set a priority | 0-9; past that it is a wish, not a priority |
@@ -196,7 +239,7 @@ Everything that changes code renders as a **command to run in Claude Code** inst
 
 ## How a project gets on it
 
-`launchpad add <path>`, or `/launchpad:onboard` inside the repo. That is the entire integration: the registry holds **paths only**, and everything on screen is re-derived from each repo's own `.launchpad/state.yml`, backlog and events on every request.
+`/launchpad:onboard` inside the repo — `setup` adds the project as it records it — or `launchpad add <path>` for one set up elsewhere. That is the entire integration: the registry holds **paths only**, and everything on screen is re-derived from each repo's own `.launchpad/state.yml`, backlog and events on every request.
 
 Nothing is generated, templated or cloned per project. The page ships pre-built and byte-identical to everyone — **never regenerate it, and never write a per-project dashboard.** N customers must get one consistent UI, not N inconsistent ones. If a section needs to change, change `src/dashboard/app.html` in launchpad itself.
 

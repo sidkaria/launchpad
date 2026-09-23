@@ -445,6 +445,15 @@ table.kv td{padding:7px 0;border-bottom:1px solid var(--line);vertical-align:top
 table.kv td:first-child{width:196px;padding-right:14px}
 table.kv tr:last-child td{border-bottom:0}
 table.kv code{font-size:11.8px;word-break:break-all;color:var(--acc)}
+/* A credential's key, one per block: a three-column table in a 462px drawer
+   squeezed the key name to six characters a line ("androi / d_keys / tore_b"). */
+.credkeys{margin:2px 0 6px}
+.credkey{padding:9px 0;border-bottom:1px solid var(--line)}
+.credkey:last-child{border-bottom:0}
+.credkey .ck1{display:flex;align-items:center;justify-content:space-between;gap:10px}
+.credkey .ck1 code{font-size:12px;color:var(--acc);overflow-wrap:anywhere}
+.credkey .ck2{font-size:12.8px;color:var(--muted);margin-top:4px;line-height:1.5}
+.credkey .ck2 .dir{font-family:var(--mono);font-size:11px;color:var(--faint);overflow-wrap:anywhere}
 /* A kv table sharing a flex row with the app's icon. The min-width is what
    stops the two columns collapsing into each other on a wide card; on a phone
    it is 260px of demand in a 283px box next to a 64px icon, which is how
@@ -589,7 +598,7 @@ aside.drawer.open{transform:none}
 }
 
 /* ── panes that would otherwise end in a void ─────────────────────────────
-   Decisions, Keys and Marketing can be two cards tall on a small project,
+   Decisions, Credentials and Marketing can be two cards tall on a small project,
    leaving most of the viewport black under a folder tab. A panel with a
    floor, and a closing note that says what the tab is for, ends the page
    instead of trailing off. */
@@ -603,6 +612,107 @@ aside.drawer.open{transform:none}
   display:flex;align-items:flex-start;gap:10px;color:var(--faint);font-size:12.3px;line-height:1.6}
 .panefoot svg{color:var(--line2);margin-top:2px;flex:0 0 auto}
 .panefoot b{color:var(--muted);font-weight:600}
+
+/* ── needs you ────────────────────────────────────────────────────────────
+   The one strip that is fleet-wide and sits above everything, including the
+   sidebar. Every fact in it already existed somewhere — a missing vault key on
+   the Credentials tab, a `?` on the scorecard, a cost chip on Decisions, a pipeline
+   with no disposition — and seven places to look is the same as none.
+
+   Deliberately NOT a toast. A toast that carries "your upload keystore has not
+   been backed up" and then disappears has told nobody anything; the whole point
+   is that it stays until somebody deals with it.
+
+   Deliberately NOT `position:sticky`, either. The overflow assertion in the L3
+   harness excuses anything inside a fixed or sticky subtree — a drawer parked
+   at translateX(100%) is legitimately a viewport past the fold — so making this
+   sticky would quietly exempt the widest new element on the page from the one
+   check that catches a card running off a 375px screen. */
+.needs{border-bottom:1px solid var(--line2);background:
+  linear-gradient(180deg,color-mix(in srgb,var(--warn) 7%,var(--e1)),var(--e1));
+  box-shadow:var(--hair)}
+.needs.clear{background:var(--e1)}
+.needshead{display:flex;align-items:center;gap:12px;flex-wrap:wrap;padding:11px 34px}
+.needshead>.ic{display:grid;place-items:center;width:26px;height:26px;border-radius:8px;flex:0 0 26px;
+  background:color-mix(in srgb,var(--warn) 18%,transparent);color:var(--warn)}
+.needs.clear .needshead>.ic{background:color-mix(in srgb,var(--ok) 15%,transparent);color:var(--ok)}
+.needshead b{font-size:14px;font-weight:640;letter-spacing:-.018em}
+.needshead .sub{color:var(--muted);font-size:12.5px}
+.needcounts{display:flex;gap:6px;flex-wrap:wrap;min-width:0}
+/* The cost tile's compact form. A button, because it opens the full ledger —
+   a total nobody can trace is a total nobody believes. */
+/* It carries a SENTENCE of numbers — "$20 a month · $99 a year · $25 once",
+   "all unavoidable" — so it wraps rather than holding its width. Nowrap put its
+   right edge 77px past a 375px screen, which is the same defect the Decisions
+   cost chip had and the same fix: nothing here is disposable, so it wraps. */
+.costchip{display:inline-flex;align-items:center;gap:8px;padding:6px 11px;border-radius:9px;
+  border:1px solid var(--line2);background:var(--e2);font-size:12px;font-family:var(--mono);
+  letter-spacing:.01em;color:var(--ink);text-align:left;
+  min-width:0;max-width:100%;flex-wrap:wrap;transition:border-color .14s,background .14s}
+.costchip b,.costchip .z{min-width:0;overflow-wrap:anywhere}
+.costchip:hover{border-color:var(--acc);background:var(--e3)}
+.costchip .z{color:var(--faint)}
+.costchip b{font-weight:650}
+/* Bounded on purpose. An empty vault legitimately produces thirty-odd items,
+   and a strip thirty cards tall pushes the fleet — the thing it is annotating —
+   entirely below the fold. Everything stays in the DOM; the box scrolls. */
+.needbody{max-height:min(44vh,392px);overflow-y:auto;overflow-x:hidden;
+  padding:0 34px 14px;display:grid;gap:10px}
+.needgroup{display:grid;gap:6px}
+.needgroup>.lbl{display:flex;align-items:center;gap:7px}
+.needgroup>.lbl i{width:7px;height:7px;border-radius:2px;display:inline-block;background:var(--line2)}
+.needgroup[data-g=blocks]>.lbl i{background:var(--gap)}
+.needgroup[data-g=money]>.lbl i{background:var(--warn)}
+.needgroup[data-g=irreversible]>.lbl i{background:var(--acc2)}
+.needgroup[data-g=facts]>.lbl i{background:var(--muted)}
+.needcard{display:flex;align-items:center;gap:11px;padding:10px 13px;border-radius:var(--r-sm);
+  background:var(--e2);border:1px solid var(--line);min-width:0;
+  transition:border-color .15s,background .15s}
+.needcard:hover{border-color:var(--line2);background:var(--e3)}
+.needcard>.who{display:inline-flex;align-items:center;gap:6px;flex:0 0 auto;max-width:190px;min-width:0}
+.needcard>.who span.nm{font-size:11.5px;font-family:var(--mono);color:var(--muted);letter-spacing:.02em;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.needcard>.t{flex:1;min-width:0;font-size:13.2px;letter-spacing:-.01em;line-height:1.45;
+  overflow-wrap:anywhere}
+.needcard>.t em{font-style:normal;color:var(--faint);font-family:var(--mono);font-size:11px;
+  letter-spacing:.04em;text-transform:uppercase;margin-left:8px}
+.needcard .btn{flex:0 0 auto}
+.needs .pill.cost{background:color-mix(in srgb,var(--warn) 14%,transparent);color:var(--warn);
+  border-color:color-mix(in srgb,var(--warn) 28%,transparent);flex:0 0 auto}
+.needs .pill.free{background:var(--e3);color:var(--faint);flex:0 0 auto}
+/* The whole card is a target for "tell me more"; the button is the one action. */
+.needcard>.t{cursor:pointer}
+/* The full ledger, wherever it is rendered — the fleet view and the drawer. */
+.ledger{display:grid;gap:9px}
+.ledgerrow{display:flex;align-items:baseline;gap:12px;font-size:13px}
+.ledgerrow .n{font-family:var(--mono);font-weight:680;font-size:16px;letter-spacing:-.03em;
+  min-width:92px;flex:0 0 auto}
+.ledgerrow .split{color:var(--muted);font-size:12.3px;font-family:var(--mono);letter-spacing:.02em;
+  min-width:0;overflow-wrap:anywhere}
+.ledgernote{font-size:12.3px;color:var(--faint);line-height:1.6}
+.ledgernote b{color:var(--muted);font-weight:600}
+@media (max-width:900px){
+  .needshead{padding-left:18px;padding-right:18px}
+  .needbody{padding-left:18px;padding-right:18px}
+}
+@media (max-width:560px){
+  .needshead{padding:10px 16px;gap:8px}
+  .needbody{padding:0 16px 12px;max-height:min(52vh,360px)}
+  /* On a phone a card is three rows, not one: the name, the thing, the action.
+     Squeezing a button and a cost chip onto the same line as a sentence is how
+     the sentence ends up two words wide. */
+  .needcard{flex-wrap:wrap;gap:8px}
+  .needcard>.who{max-width:100%}
+  .needcard>.t{flex:1 0 100%;order:2}
+  .needcard .btn{order:3;margin-left:auto}
+  .needs .pill.cost,.needs .pill.free{order:3}
+  /* The totals survive the crop; the one-word classification does not need to.
+     It is on the title, and the drawer behind the chip says it in full. */
+  .costchip{font-size:11px;padding:5px 9px}
+  .costchip .z{display:none}
+  .ledgerrow{flex-wrap:wrap;gap:4px 10px}
+  .ledgerrow .n{min-width:0}
+}
 
 /* ── responsive ───────────────────────────────────────────────────────────
    Two breakpoints, both previously unverified. 900px folds the sidebar into
@@ -720,6 +830,9 @@ aside.drawer.open{transform:none}
   <span>Seven invented apps, written to a temporary folder. Not your projects.</span>
   <span class="spacer"></span><b id="demoroot"></b>
 </div>
+<!-- Fleet-wide, above the sidebar as well as the content, on every view.
+     Filled by `renderNeeds()`; one line when nothing is waiting. -->
+<section class="needs clear" id="needs" aria-label="Needs you"></section>
 <div class="shell">
   <aside class="nav">
     <div class="brand">
@@ -807,6 +920,13 @@ function noteArrivals(data) {
 
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+/**
+ * The two marks the "needs you" prose uses — `code` and **emphasis** — rendered,
+ * after escaping. The drawer used to print them literally: "**Admin** role"
+ * and a `keytool` command wrapped in backticks, on the one screen a first-time
+ * shipper reads slowly.
+ */
+const md = s => esc(s).replace(/`([^`]+)`/g, '<code>$1</code>').replace(/\*\*([^*]+)\*\*/g, '<b>$1</b>');
 const ico = (n, cls) => `<svg class="i ${cls || ''}" viewBox="0 0 24 24"><use href="#i-${n}"/></svg>`;
 const tone = n => n >= 80 ? 'var(--ok)' : n >= 55 ? 'var(--warn)' : 'var(--gap)';
 
@@ -1093,6 +1213,11 @@ function renderNav() {
         <span style="color:var(--warn)">${esc(WATCH.reason || 'refreshing on a timer')}</span></div>`
     : '';
   $('#navfoot').innerHTML = `
+    <div class="row"><button style="display:flex;align-items:center;gap:8px;padding:0"
+        onclick="window.scrollTo({top:0,behavior:'smooth'})"
+        title="Everything waiting on you, at the top of the page">
+      ${ico('alert', 'sm')}<span><b id="needcount">${t.needsYou}</b> need${t.needsYou === 1 ? 's' : ''} you</span>
+    </button></div>
     <div class="row">${ico('moon', 'sm')}<b>${t.readyTonight}</b> running tonight</div>
     <div class="row">${ico('route', 'sm')}<b>${t.tasksReady}</b> ready · <b>${t.tasksBlocked}</b> blocked</div>
     ${t.inbox ? `<div class="row">${ico('spark', 'sm')}<b>${t.inbox}</b> awaiting grooming</div>` : ''}
@@ -1105,7 +1230,7 @@ const TABS = [
   ['deploy',    'Build & Release', 'rocket'],
   ['decisions', 'Decisions', 'bulb'],
   ['roadmap',   'Roadmap', 'route'],
-  ['secrets',   'Keys', 'key'],
+  ['secrets',   'Credentials', 'key'],
   ['marketing', 'Marketing', 'mega'],
 ];
 
@@ -1141,11 +1266,15 @@ function renderTop() {
     <div class="title">${markOf(p, 'md')}
       <h1>${esc(p.name)}</h1>${pills}</div>
     <div class="subtitle">${pathButton(p.path)}
+      ${costChip(p.ledger, p.name)}
       <button class="btn ghost sm" style="margin-left:auto" onclick="removeProject(${DATA.projects.indexOf(p)})"
         title="Remove from the list; the repo is untouched">${ico('minus', 'sm')}Stop tracking</button></div>`;
 
   const counts = {
-    readiness: p.score ? p.score.applicable - p.score.passed : 0,
+    // The same "left" the sidebar, the card and the terminal say. It used to be
+    // gaps + unanswered questions — 14 on the tab beside "11 left" on the same
+    // screen, two numbers for one question.
+    readiness: p.score ? p.score.remaining : 0,
     roadmap: ns.counts.ready,
     secrets: p.secrets.filter(s => !s.present).length,
   };
@@ -1153,6 +1282,301 @@ function renderTop() {
     <button class="tab" aria-selected="${VIEW.tab === k}" onclick="go('${esc(p.path)}','${k}')">
       ${ico(i)}${l}${counts[k] ? `<span class="badge">${counts[k]}</span>` : ''}
     </button>`).join('')}</div>`;
+}
+
+/* ── needs you ───────────────────────────────────────────────────────────
+   The fleet-wide strip. Everything it renders comes out of `DATA.needs`,
+   which is `src/needs.ts` — the page computes no grouping, no price wording
+   and no counts of its own, because three copies of one mapping is three
+   chances for the strip to file something differently from the terminal. */
+const NEED_ICON = {
+  'paste-credential': 'key',
+  'confirm': 'help',
+  'decide-money': 'zap',
+  'acknowledge-irreversible': 'shield',
+  'keep-or-migrate': 'layers',
+  'store-gate': 'box',
+  'refused-surface': 'alert',
+};
+const NEED_GROUPS = [
+  ['blocks', 'Blocks a release'],
+  ['money', 'Costs money'],
+  ['irreversible', 'Cannot be undone'],
+  ['facts', 'Only you can answer'],
+];
+
+/** Which projects a row is about: one chip, or a count when it is account-wide. */
+function needWho(n) {
+  const first = DATA.projects.find(p => p.path === n.projectPath);
+  const mark = first ? markOf(first, 'xs') : '';
+  const extra = n.projects.length - 1;
+  const text = extra > 0 ? `${esc(n.project)} +${extra}` : esc(n.project);
+  const title = n.projects.map(p => p.label).join(', ');
+  return `<span class="who" title="${esc(title)}">${mark}<span class="nm">${text}</span></span>`;
+}
+
+/**
+ * The price chip on a card.
+ *
+ * `costLabel` is written by `needs.ts`, never composed here — the chip a buyer
+ * reads and the number the ledger adds have to come out of the same place, or
+ * the strip and the Decisions tab quote two prices for one subscription.
+ */
+const needCost = n => (n.costLabel
+  ? `<span class="pill ${n.cost && n.cost.amount ? 'cost' : 'free'}"
+       title="${esc(n.costClass || '')}">${esc(n.costLabel)}</span>`
+  : '');
+
+/**
+ * How far through a credential set the vault already is.
+ *
+ * Only where there is more than one key, because "0 of 1" is noise. This is the
+ * thing a card-per-vault-key list could not say at all: the four keys of an
+ * upload keystore were four strangers, so there was nowhere to put "you have
+ * two of these already".
+ */
+const needProgress = n => {
+  const a = n.action;
+  return a.type === 'paste-credential' && a.total > 1
+    ? `<em>${a.present} of ${a.total} stored</em>` : '';
+};
+
+function renderNeedsStrip() {
+  const el = $('#needs');
+  const items = DATA.needs || [];
+  const ledger = DATA.ledger;
+  // An empty list is good news only when something was looked at. With no
+  // project added it said "Every credential is in your vault" about a fleet of
+  // zero — the same false comfort `launchpad needs` used to print.
+  if (!items.length && !(DATA.projects || []).length) {
+    el.className = 'needs clear';
+    el.innerHTML = `<div class="needshead">
+      <span class="ic">${ico('alert', 'sm')}</span>
+      <b>Nothing to check yet</b>
+      <span class="sub">No project has been added. Run <code>/launchpad:onboard</code> in the repo you want
+        to ship, and what it needs from you appears here.</span>
+      <span class="spacer"></span>${costChip(ledger, 'this fleet')}</div>`;
+    return;
+  }
+  if (!items.length) {
+    el.className = 'needs clear';
+    el.innerHTML = `<div class="needshead">
+      <span class="ic">${ico('check', 'sm')}</span>
+      <b>Nothing needs you</b>
+      <span class="sub">Every credential is in your vault, and nothing is waiting on a decision only you
+        can make.</span>
+      <span class="spacer"></span>${costChip(ledger, 'this fleet')}</div>`;
+    return;
+  }
+  el.className = 'needs';
+  const counts = NEED_GROUPS
+    .map(([g, label]) => [items.filter(n => n.group === g).length, label])
+    .filter(([n]) => n > 0)
+    .map(([n, label]) => `<span class="pill">${n} · ${esc(label.toLowerCase())}</span>`)
+    .join('');
+
+  const groups = NEED_GROUPS.map(([g, label]) => {
+    const mine = items.filter(n => n.group === g);
+    if (!mine.length) return '';
+    return `<div class="needgroup" data-g="${g}">
+      <div class="lbl"><i></i>${esc(label)} · ${mine.length}</div>
+      ${mine.map((n, i) => needCard(n, i)).join('')}</div>`;
+  }).join('');
+
+  el.innerHTML = `
+    <div class="needshead">
+      <span class="ic">${ico('alert', 'sm')}</span>
+      <b>${items.length} thing${items.length === 1 ? '' : 's'} need${items.length === 1 ? 's' : ''} you</b>
+      <span class="needcounts">${counts}</span>
+      <span class="spacer"></span>${costChip(ledger, 'this fleet')}
+    </div>
+    <div class="needbody">${groups}</div>`;
+}
+
+/**
+ * One row: who it is about, what it is, what it costs, and the ONE action.
+ *
+ * The title is a button of its own so the whole row explains itself on click —
+ * a card that can only be acted on and never read is a card people click to
+ * find out what it was.
+ */
+function needCard(n, i) {
+  const idx = (DATA.needs || []).indexOf(n);
+  return `<div class="needcard"${rise(Math.min(i * 28, 260))} data-need="${esc(n.key)}"
+      data-kind="${esc(n.kind)}">
+    ${needWho(n)}
+    <span class="t" role="button" tabindex="0" onclick="openNeed(${idx})"
+      onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();openNeed(${idx})}"
+      >${ico(NEED_ICON[n.kind] || 'help', 'sm')} ${esc(n.title)}${needProgress(n)}</span>
+    ${needCost(n)}
+    <button class="btn sm ${n.kind === 'refused-surface' ? 'ghost' : ''}"
+      onclick="actOnNeed(${idx})">${esc(n.action.label)}</button>
+  </div>`;
+}
+
+/**
+ * The cost tile, compact. Opens the full ledger, because a total nobody can
+ * trace to a decision is a total nobody believes — and this one is assembled
+ * out of the same cost chips the Decisions tab renders.
+ */
+function costChip(ledger, scope) {
+  if (!ledger) return '';
+  return `<button class="costchip" onclick="openLedger(${esc(JSON.stringify(scope))})"
+      title="What ${esc(scope)} costs — click for the breakdown">
+    ${ico('zap', 'sm')}<b>${esc(ledger.summary)}</b>
+    <span class="z">${esc(ledger.summaryClass)}</span></button>`;
+}
+
+/** The ledger, spelled out: the three cadences, the split, and what has no number. */
+function ledgerHtml(ledger, scope) {
+  const row = (b, suffix) => {
+    if (!b.total) return '';
+    const split = [
+      b.unavoidable ? `$${b.unavoidable} unavoidable` : '',
+      b.launchpadsChoice ? `$${b.launchpadsChoice} launchpad's choice` : '',
+      b.optional ? `$${b.optional} optional` : '',
+    ].filter(Boolean).join(' · ');
+    return `<div class="ledgerrow"><span class="n">$${b.total}</span>
+      <span>${esc(suffix)}</span><span class="split">${esc(split)}</span></div>`;
+  };
+  const rows = row(ledger.monthly, 'a month') + row(ledger.yearly, 'a year') + row(ledger.oneTime, 'once');
+  const unpriced = (ledger.unpriced || []).map(u =>
+    `<div class="ledgernote">${ico('help', 'sm')} <b>${esc(u.label)}</b>${u.project ? ` (${esc(u.project)})` : ''}
+      — ${esc(u.why)}</div>`).join('');
+  return `<div class="ledger">
+    ${rows || `<div class="ledgernote">Nothing recurring and nothing one-off. Every platform launchpad
+      chose for ${esc(scope)} has a free tier that covers what you are doing.</div>`}
+    ${ledger.perYear ? `<div class="ledgernote"><b>$${ledger.perYear} a year</b> in total, before anything
+      metered.</div>` : ''}
+    ${unpriced}
+    <div class="ledgernote">Every number here is the cost chip of a decision on the Decisions tab.
+      Nothing is estimated, and anything billed by use is listed rather than guessed at.</div>
+  </div>`;
+}
+
+function openLedger(scope) {
+  const p = cur();
+  const ledger = p && scope !== 'this fleet' ? p.ledger : DATA.ledger;
+  drawer(scope === 'this fleet' ? 'Fleet' : scope, 'What this costs', ledgerHtml(ledger, scope));
+}
+
+/** The whole item, with its reasoning, what it blocks, and how to answer it. */
+function openNeed(i) {
+  const n = (DATA.needs || [])[i];
+  if (!n) return;
+  const a = n.action;
+  let body = `<p>${md(n.why)}</p>
+    <h4>${ico('route', 'sm')}<span class="lbl">What this blocks</span></h4>
+    <p>${md(n.blocks)}</p>
+    ${n.warning ? `<div class="note bad">${ico('alert')}<span>${md(n.warning)}</span></div>` : ''}`;
+  if (n.costLabel) {
+    body += `<h4>${ico('zap', 'sm')}<span class="lbl">What it costs</span></h4>
+      <p>${esc(n.costLabel)} — ${esc(n.costClass || '')}.</p>`;
+  }
+  if (n.projects.length > 1) {
+    body += `<h4>${ico('layers', 'sm')}<span class="lbl">Answer it once</span></h4>
+      <p>This is the same question for ${esc(n.projects.map(x => x.label).join(', '))}. Answering it here
+      answers it for all of them.</p>`;
+  }
+  if (a.type === 'paste-credential') {
+    /**
+     * The command, never a field.
+     *
+     * There is no input on this page that takes a credential and there is not
+     * going to be one: a value typed into a browser is in the DOM, in the
+     * browser's memory, and one autofill away from a password manager that
+     * thinks it is a login form. `launchpad secret` reads it from a terminal
+     * straight into the OS vault, and nothing in between ever sees it.
+     */
+    const one = a.total === 1;
+    body += `<h4>${ico('key', 'sm')}<span class="lbl">${
+      a.total > 1 ? `What comes out of it — ${a.present} of ${a.total} stored` : 'What this is'}</span></h4>
+      <div class="credkeys">${a.keys.map(k => `<div class="credkey">
+        <div class="ck1"><code>${esc(k.vaultKey)}</code>${k.present
+          ? `<span class="pill live">${ico('check')}stored</span>`
+          : `<span class="pill danger">${ico('alert')}missing</span>`}</div>
+        <div class="ck2">${md(k.what)} <span class="dir">· CI reads it as ${esc(k.secretName)}</span></div>
+      </div>`).join('')}</div>
+      <h4 style="margin-top:18px">${ico('play', 'sm')}<span class="lbl">Store ${one ? 'it' : 'the missing ones'}</span></h4>
+      <p>Run ${a.commands.length === 1 ? 'this' : 'these'} in a terminal — each asks for the value and shows
+      nothing as you paste. Mission Control has no field for a credential value, deliberately: what you paste
+      into a browser is in the page, and this goes straight into ${esc(vaultPlace())}.</p>
+      ${a.commands.map(c => `<code class="cmd">${esc(runCmd(c))}</code>`).join('')}
+      <button class="btn ghost sm" style="margin-top:10px"
+        onclick="copy(${esc(JSON.stringify(a.commands.map(runCmd).join('\n')))},${a.commands.length === 1 ? "'Command'" : "'Commands'"})">
+        ${ico('copy', 'sm')}Copy</button>
+      <p style="margin-top:16px">It is <b>${esc(a.scope === 'per-app' ? 'per app' : 'account-wide')}</b>${
+        a.scope === 'per-app'
+          ? ' — each app needs its own.'
+          : ` — store ${one ? 'it' : 'them'} once and every project that needs ${one ? 'it' : 'them'}, now or later, is provisioned from ${one ? 'it' : 'them'}.`}</p>`;
+  } else if (a.type === 'refused-surface') {
+    body += `<h4>${ico('shield', 'sm')}<span class="lbl">Nothing to do</span></h4>
+      <p>This one is not a question. It is launchpad declining to write a pipeline it cannot build, and it
+      stays here until the pipeline exists. Run <code>/launchpad:setup</code> to see the refusal in full.</p>`;
+  } else if (a.type === 'keep-or-migrate') {
+    body += `<h4>${ico('layers', 'sm')}<span class="lbl">The other answer</span></h4>
+      <p>${esc(a.alternative)}</p>
+      <button class="btn" onclick="answerNeed(${i},'keep')">${ico('check', 'sm')}${esc(a.label)}</button>`;
+  } else if (a.type === 'decide-money') {
+    body += `<h4>${ico('zap', 'sm')}<span class="lbl">Your call</span></h4>
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <button class="btn" onclick="answerNeed(${i},'accept')">${esc(a.accept)}</button>
+        <button class="btn ghost" onclick="answerNeed(${i},'decline')">${esc(a.decline)}</button>
+      </div>
+      <p style="margin-top:14px">Either way it is recorded with today's date and shown on the Decisions
+      tab, so a choice made months ago still reads as a choice you made.</p>`;
+  } else if (a.type === 'confirm') {
+    body += `<h4>${ico('check', 'sm')}<span class="lbl">Only you can answer this</span></h4>
+      <p>launchpad cannot see inside a drawer, a password manager or an inbox, so it will not guess. It is
+      recorded as your answer, dated, and it never counts against you either way.</p>
+      <button class="btn" onclick="answerNeed(${i},'accept')">${ico('check', 'sm')}${esc(a.label)}</button>`;
+  } else {
+    body += `<button class="btn" onclick="answerNeed(${i},'acknowledged')">
+      ${ico('check', 'sm')}${esc(a.label)}</button>`;
+  }
+  drawer(n.projects.map(x => x.label).join(' · '), n.title, body);
+}
+
+/** The card's one button. The same paths the drawer offers, one click shorter. */
+function actOnNeed(i) {
+  const n = (DATA.needs || [])[i];
+  if (!n) return;
+  const a = n.action;
+  // Two kinds have nothing to record: a credential is stored in a terminal, and
+  // a refusal is a fact rather than a question. Both open and explain instead.
+  if (a.type === 'paste-credential' || a.type === 'refused-surface') return openNeed(i);
+  if (a.type === 'keep-or-migrate') return answerNeed(i, 'keep');
+  if (a.type === 'confirm') return answerNeed(i, 'accept');
+  if (a.type === 'decide-money') return answerNeed(i, 'accept');
+  return answerNeed(i, 'acknowledged');
+}
+
+/**
+ * Record an answer.
+ *
+ * Three destinations, because the three answers are genuinely different things.
+ * A scorecard row goes through the confirm flow that already existed. A
+ * disposition goes into `state.yml`, because `apply` branches on it and nothing
+ * else — an answer nothing enforces is worse than never asking. Everything else
+ * is an acknowledgement, dated, in the same `confirmed.yml`.
+ */
+function answerNeed(i, choice) {
+  const n = (DATA.needs || [])[i];
+  if (!n) return;
+  const a = n.action;
+  closeDrawer();
+  if (a.type === 'confirm') {
+    return act(() => post('/api/confirm', { path: n.projectPath, check: a.check, confirmed: true }),
+      'Noted — launchpad will stop asking');
+  }
+  if (a.type === 'keep-or-migrate') {
+    return act(() => post('/api/disposition',
+      { path: n.projectPath, pipeline: a.path, disposition: 'leave-alone' }),
+    `${a.path} left alone`);
+  }
+  const paths = n.projects.map(p => p.path);
+  act(() => post('/api/acknowledge', { paths, id: n.id, choice }),
+    choice === 'decline' ? 'Noted — recorded as your decision' : 'Noted, and dated');
 }
 
 /* ── fleet ───────────────────────────────────────────────────────────── */
@@ -1269,8 +1693,23 @@ function paneFleet() {
     }${esc(col.short)}</span></td>${cells}</tr>`;
   }).join('');
 
+  /**
+   * What the whole fleet costs, spelled out rather than chipped.
+   *
+   * The buyer's question was "we should use entirely free platforms, but what
+   * WILL cost them money?" — and until now the answer was scattered across one
+   * cost chip per decision per project. This is that, added up, with the split
+   * that matters: what the platform charges whatever anyone does, versus what
+   * is a consequence of a choice launchpad made and can therefore be reversed.
+   */
+  const cost = `<div class="card"${rise(70)}><div class="h"><h3>${ico('zap')}What this fleet costs</h3>
+      <span class="spacer"></span>
+      <span class="lbl">every number is a decision's own cost chip</span></div>
+    <div class="b">${ledgerHtml(DATA.ledger, 'this fleet')}</div></div>`;
+
   return `${hero}
     <div class="pcards">${cards}</div>
+    ${cost}
     ${paneLive()}
     <div class="lanehead">${ico('grid', 'sm')}<span class="lbl">The full rubric</span>
       <span class="n" style="margin-left:auto;font-family:var(--mono);font-size:11px;color:var(--faint)">
@@ -1447,17 +1886,39 @@ function paneDecisions(p) {
        you decide anything.`
     : `<b>This is what you actually bought.</b> The pipelines are commodity — these choices, and the
        reasons under them, are the part that took years of failed runs to learn.`;
+  /**
+   * The answers this person gave, dated.
+   *
+   * An item that vanishes from the strip when a button is pressed and leaves no
+   * record anywhere is a button that HID a decision rather than recording one.
+   * This is where it is reachable afterwards, and the wording matters: "you
+   * decided this on 3 March" is a different sentence from "this is handled",
+   * and only one of them is something launchpad can vouch for.
+   */
+  const answered = (p.answered || []).length ? `
+    <div class="card"><div class="h"><h3>${ico('check')}Answered by you</h3>
+      <span class="spacer"></span><span class="lbl">recorded in .launchpad/confirmed.yml</span></div>
+      <div class="b"><table class="kv">${p.answered.map(a => `
+        <tr><td><span class="lbl">${esc(a.id)}</span></td>
+          <td>You decided this on <b>${esc(a.at)}</b>${a.choice && a.choice !== 'acknowledged'
+            ? ` — <code>${esc(a.choice)}</code>` : ''}${a.note ? ` <span class="dir">${esc(a.note)}</span>` : ''}</td>
+        </tr>`).join('')}</table>
+        <div class="empty" style="padding-top:11px">${ico('help', 'sm')}Delete a line from that file and
+          launchpad asks again. Nothing here can turn a gap green — the scorecard never reads these.</div>
+      </div></div>` : '';
+
   return `
     <div class="note">${ico('bulb')}<span>${note}</span></div>
+    ${answered}
     <div class="card">${p.decisions.map((d, i) => `
       <div class="dec"${rise(Math.min(i * 24, 300))}>
         <span class="lbl">${esc(d.area)}</span>
-        <div class="t2"><span class="ch">${esc(d.choice)}</span>
+        <div class="t2"><span class="ch">${md(d.choice)}</span>
           <span class="pill ${d.source === 'yours' ? '' : d.proposed ? '' : 'acc'}">
             ${ico(d.source === 'yours' ? 'shield' : d.proposed ? 'route' : 'spark')}${
               d.source === 'yours' ? 'yours, kept' : d.proposed ? 'would choose' : 'launchpad chose'}</span>
           ${d.cost ? longPill('warn', 'zap', d.cost) : ''}</div>
-        <p class="wy">${esc(d.why)}</p>
+        <p class="wy">${md(d.why)}</p>
       </div>`).join('')}</div>`;
 }
 
@@ -1600,15 +2061,31 @@ function paneRoadmap(p, pi) {
       </div></div>` : ''}`;
 }
 
+/**
+ * A `launchpad …` command as this machine runs it. Nobody has `launchpad` on
+ * their PATH; the server says where its own CLI is (`DATA.invocation`).
+ */
+function runCmd(c) {
+  const inv = (DATA && DATA.invocation) || 'launchpad';
+  return c.replace(/(^|\| )launchpad(?= )/, (m, pre) => pre + inv);
+}
+/** Where credentials go on this machine, in the words `doctor` uses. */
+function vaultPlace() {
+  const v = DATA && DATA.vault;
+  if (!v) return 'your vault';
+  return v.keychain ? `your ${v.backend === 'keychain' ? 'macOS Keychain' : 'system keyring'}` : 'the encrypted vault file in your home folder';
+}
+
 function paneSecrets(p) {
   if (p.problem) return notOnboarded(p);
   if (!p.secrets.length) return `<div class="empty">${ico('check', 'sm')}This project needs no credentials.</div>`;
   const missing = p.secrets.filter(s => !s.present).length;
   return `
     <div class="note">${ico('key')}<span><b>Presence only — values are never read, sent or displayed.</b>
-      They live in your OS keychain and go straight to GitHub via <code>launchpad secrets</code>.</span></div>
-    ${missing ? `<div class="note bad">${ico('alert')}<span><b>${missing} missing.</b> Run
-      <code>/launchpad:doctor</code> here — it names exactly where to get each one and what role it needs.</span></div>` : ''}
+      They live in ${esc(vaultPlace())} and go straight to GitHub via <code>launchpad secrets</code>.</span></div>
+    ${missing ? `<div class="note bad">${ico('alert')}<span><b>${missing} missing.</b> The cards in the
+      strip above say where to get each one and give the command that stores it; <code>/launchpad:doctor</code>
+      walks through them in Claude Code.</span></div>` : ''}
     <div class="card"><div class="b"><table class="kv">${p.secrets.map(s => `
       <tr><td><code>${esc(s.key)}</code></td>
       <td style="text-align:right">${s.present ? `<span class="pill live">${ico('check')}in vault</span>`
@@ -1804,7 +2281,7 @@ function render() {
   const key = VIEW.project + '|' + VIEW.tab;
   ANIM = key !== lastKey;
   lastKey = key;
-  renderNav(); renderTop();
+  renderNeedsStrip(); renderNav(); renderTop();
   const p = cur();
   // Consumed by exactly one render. A later re-render from clicking a tab must
   // not replay a flash for a check that resolved three minutes ago.
@@ -1842,7 +2319,7 @@ const PANE_NOTE = {
     + 'work or implying it maintains something it has never touched.',
   roadmap: 'One backlog, two ways to run it: unattended overnight, or attended in a fresh Claude '
     + 'session. Same tasks, same gate. Nothing runs unless a gate command exists to check it.',
-  secrets: 'Presence only. launchpad reads whether a key is in your OS keychain and never reads '
+  secrets: 'Presence only. launchpad reads whether a credential is in your vault and never reads '
     + 'the value — not into this page, not into a log, not into a report.',
   marketing: 'Deliberately empty rather than half-working. An obviously unfinished section reads '
     + 'as a roadmap; a half-working one reads as broken.',

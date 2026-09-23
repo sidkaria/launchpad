@@ -48,7 +48,7 @@ node "${CLAUDE_PLUGIN_ROOT}/dist/cli/index.js" add [path]      # register (defau
 node "${CLAUDE_PLUGIN_ROOT}/dist/cli/index.js" remove [path]   # unregister; the repo is untouched
 ```
 
-`add` requires the project to be set up first. Register a project as the last step of onboarding it, so it shows up in the fleet from then on. The registry lives at `~/.launchpad/projects.json` and holds **only paths** — every project's truth stays in its own repo, so deleting the registry loses nothing but the list.
+`setup` adds the project to the fleet as it records it, so an onboarded project is always on the list (and `needs` sees it). `add` is for a project set up before that, or moved: it requires the project to be set up first. The registry lives at `~/.launchpad/projects.json` and holds **only paths** — every project's truth stays in its own repo, so deleting the registry loses nothing but the list.
 
 A project row can report a problem instead of a score: the directory is gone, or it was never set up. Say which, rather than treating it as a failure.
 

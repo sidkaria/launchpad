@@ -52,7 +52,7 @@ export function hostSupport(archetype: Archetype, platform: NodeJS.Platform = pr
         local: false,
         macOnlySetup: [
           'export the Developer ID Application certificate from the login keychain',
-          'generate the per-app Sparkle update-signing key (`brew install sparkle`)',
+          'generate the per-app Sparkle update-signing key (`generate_keys` from Sparkle\'s release tarball)',
         ],
         note:
           'macOS builds run on CI\'s macOS runner, but two one-time setup steps read a Mac\'s ' +
