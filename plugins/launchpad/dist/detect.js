@@ -81,10 +81,16 @@ export const STATIC_GENERATORS = [
     { name: 'Zola', files: ['config.toml'], requires: /^\s*base_url\s*=/m },
     { name: 'Hugo', files: ['hugo.toml', 'hugo.yaml', 'config.toml'] },
     { name: 'Jekyll', files: ['_config.yml'] },
-    { name: 'Eleventy', files: ['.eleventy.js', 'eleventy.config.js'] },
+    { name: 'Eleventy', files: ['.eleventy.js', 'eleventy.config.js', 'eleventy.config.mjs', 'eleventy.config.cjs'] },
     { name: 'MkDocs', files: ['mkdocs.yml'] },
 ];
-function detectStaticGenerator(dir, has) {
+/**
+ * Which static generator builds the site in `dir`, by its display name, or
+ * null for a plain-HTML site. Exported because `apply` asks the same question
+ * of the site directory it deploys: a generator's source is not a website
+ * until it has been built (see `archetypes/sitebuild.ts`).
+ */
+export function detectStaticGenerator(dir, has = rel => existsSync(join(dir, rel))) {
     for (const g of STATIC_GENERATORS) {
         const hit = g.files.find(has);
         if (!hit)

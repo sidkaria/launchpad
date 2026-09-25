@@ -34,18 +34,83 @@ export function decodeKeychainValue(raw) {
     return text;
 }
 // ── backend: macOS Keychain ──────────────────────────────────────────────────
-function keychainVault(run) {
+/**
+ * An account or keychain name on the `security -i` command line. The parser
+ * splits on whitespace and honours double quotes; a name that would need
+ * escaping inside quotes is refused rather than guessed at.
+ */
+function securityWord(v, what) {
+    if (!v || /["\\\n\r]/.test(v))
+        throw new Error(`launchpad vault: ${what} ${JSON.stringify(v)} cannot be passed to security(1)`);
+    return /\s/.test(v) ? `"${v}"` : v;
+}
+/**
+ * The line `set` writes to `security -i`'s STDIN.
+ *
+ * `security add-generic-password -w <value>` puts the credential in the
+ * process's argv, where `ps` shows it to every user on the machine for as long
+ * as the process lives — Apple's own usage text says "Use of the -p or -w
+ * options is insecure" (JOURNEY ledger #30). Interactive mode (`security -i`)
+ * reads its commands from stdin, so the argv is just `security -i`.
+ *
+ * The value travels as `-X <hex>` — "password data to be added as a
+ * hexadecimal string" — because the interactive parser is line-based and
+ * splits on whitespace: a service-account JSON, a `.p8` or a PEM is multi-line,
+ * and hex carries every byte of it verbatim with nothing to quote. `-U`
+ * ("update item if it already exists") works in interactive mode exactly as on
+ * the command line, so an existing item is updated in place — which also keeps
+ * its access list (PLAYBOOK §8). The trailing newline is not optional:
+ * `security -i` executes a line only when it ends.
+ */
+export function keychainAddCommand(key, value, keychain) {
+    const hex = Buffer.from(value, 'utf8').toString('hex');
+    return `add-generic-password -U -a ${securityWord(key, 'account')} -s ${SERVICE} -X ${hex}`
+        + `${keychain ? ` ${securityWord(keychain, 'keychain')}` : ''}\n`;
+}
+function keychainVault(run, keychain) {
+    /**
+     * A keychain PATH that does not exist is not a harmless miss: given one,
+     * `security add-generic-password` was observed to exit 0 and put the item in
+     * the LOGIN keychain instead. Refuse before anything is written.
+     */
+    const target = () => {
+        if (!keychain)
+            return [];
+        if (!existsSync(keychain))
+            throw new Error(`launchpad vault: keychain ${keychain} does not exist`);
+        return [keychain];
+    };
+    const raw = (key) => run('security', ['find-generic-password', '-a', key, '-s', SERVICE, '-w', ...target()]).trim();
     const get = (key) => {
         try {
-            return decodeKeychainValue(run('security', ['find-generic-password', '-a', key, '-s', SERVICE, '-w']).trim());
+            return decodeKeychainValue(raw(key));
         }
         catch {
             return null;
         }
     };
     return {
-        // -U updates if present; -s service namespaces all launchpad secrets
-        set: (key, value) => { run('security', ['add-generic-password', '-U', '-a', key, '-s', SERVICE, '-w', value]); },
+        // -U updates if present; -s service namespaces all launchpad secrets. The
+        // value is on stdin, never in argv (see keychainAddCommand).
+        set: (key, value) => {
+            const kc = target();
+            run('security', ['-i'], keychainAddCommand(key, value, kc[0]));
+            /**
+             * `security -i` exits with the status of its LAST command, and a command
+             * it could not parse can print usage and still leave a 0 behind. A write
+             * that did not land must be loud, so read it back: the exact value, or
+             * security(1)'s hex rendering of it (multi-line and non-ASCII values).
+             */
+            let back = null;
+            try {
+                back = raw(key);
+            }
+            catch { /* reported below */ }
+            const hex = Buffer.from(value, 'utf8').toString('hex');
+            if (back === null || !(decodeKeychainValue(back) === value || back === value || back === hex || back === value.trim())) {
+                throw new Error(`launchpad vault: the macOS Keychain did not store "${key}" (it does not read back). Nothing was printed.`);
+            }
+        },
         get,
         has: key => get(key) !== null,
     };
@@ -254,7 +319,7 @@ export function makeVault(run = realRunner, opts = {}) {
     const platform = opts.platform ?? process.platform;
     const backend = opts.backend ?? detectBackend(platform, run);
     switch (backend) {
-        case 'keychain': return keychainVault(run);
+        case 'keychain': return keychainVault(run, opts.keychain);
         case 'secret-service': return secretServiceVault(run);
         default: return fileVault({
             home: opts.home ?? homedir(),

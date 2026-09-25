@@ -2,7 +2,7 @@ import type { LaunchpadState, Surface } from '../types.js';
 import type { IosConfig } from '../archetypes/ios.js';
 import { androidFramework, type AndroidConfig } from '../archetypes/android.js';
 import { isGradleFramework } from '../archetypes/androidgradle.js';
-import type { MacosConfig } from '../archetypes/macos.js';
+import { MACOS_ARM64_ONLY, macosRunsOn, type MacosConfig } from '../archetypes/macos.js';
 import type { WebConfig } from '../archetypes/web.js';
 import type { SiteConfig } from '../archetypes/site.js';
 
@@ -325,6 +325,48 @@ export function decisionsFor(st: LaunchpadState): Decision[] {
         why: 'An un-notarized Mac app shows a Gatekeeper warning most people will not click through. '
           + 'It is invisible to a first-time shipper and it costs you most of your downloads.',
       });
+      /**
+       * Which Macs the DMG opens on — a default, so it has to be said.
+       *
+       * Unset is `arm64` (DECISIONS 2026-09-22): the build every state file
+       * written before the knob existed produces, byte for byte. A shipped app's
+       * site claimed Intel support for months over an arm64-only binary, and
+       * nobody had decided that — it was a default nothing mentioned. So the
+       * default is an entry here like any other choice, in the archetype's own
+       * words (`MACOS_ARM64_ONLY`), and choosing `universal` is one too.
+       *
+       * No `money`. Neither answer has a fee, and the ledger adds decisions by
+       * their `money`, so a choice that costs nothing must not carry one — a
+       * `0` line would still be a line in "what this costs" about something
+       * that is not a cost. An unknown value is not described here: `apply`
+       * refuses it and says why, and there is no decision to show until it is
+       * one of the two.
+       */
+      const arch = c.architectures ?? 'arm64';
+      if (arch === 'arm64') {
+        out.push({
+          area: a, source: 'launchpad',
+          choice: MACOS_ARM64_ONLY,
+          why: 'The DMG is built for Apple Silicon (arm64) alone, which is what every Mac Apple sells today '
+            + 'runs. An Intel Mac will not open it at all, so a download page or a listing that says '
+            + '"Intel" is wrong until this changes. It is the default because it is what an existing '
+            + 'pipeline already builds, and changing a shipped app\'s binary under its users is not a '
+            + 'thing to do silently. Reversible: `architectures: universal` on this surface in '
+            + '`.launchpad/state.yml`, re-run `apply`, and the next release is universal — same DMG '
+            + 'name, same appcast.',
+          cost: 'none · reversible at the next release',
+        });
+      } else if (arch === 'universal') {
+        out.push({
+          area: a, source: 'launchpad',
+          choice: macosRunsOn(c),
+          why: 'One binary with both arm64 and x86_64 in it, so the same DMG opens on an Intel Mac and on '
+            + 'Apple Silicon. The release checks the built app for both slices and fails rather than ship '
+            + 'an Intel owner a binary that will not open. The DMG name and the appcast are the same either '
+            + 'way, so going back to Apple Silicon only is one line and the next release.',
+          cost: 'none, beyond a longer release build · reversible at the next release',
+        });
+      }
       if (c.appcastDomain) {
         out.push({
           area: a, source: 'launchpad',

@@ -74,15 +74,30 @@ const TEMPLATES_DIR = join(dirname(fileURLToPath(import.meta.url)), '..', '..', 
 function loadTemplate(name) {
     return readFileSync(join(TEMPLATES_DIR, name), 'utf8');
 }
+/**
+ * The template's variables. An absent OPTIONAL step renders as nothing; an
+ * absent REQUIRED field is left out entirely, so `render` refuses it by name
+ * ("missing template variable {{SCHEME}}") instead of writing the word.
+ *
+ * `prebuild` was passed straight through, and a config without one — which is
+ * every macOS app that is not xcodegen-generated, and exactly what
+ * `verify-package.mjs` exercises — rendered the literal line `undefined` into
+ * `create-dmg.sh`, which under `set -e` is "command not found" and the end of
+ * the release (JOURNEY harvest item 4).
+ */
 function templateVars(config) {
-    return {
+    const required = {
         APP_NAME: config.appName,
         SCHEME: config.scheme,
         XCODEPROJ: config.xcodeproj,
         R2_BUCKET: config.r2Bucket,
         APPCAST_DOMAIN: config.appcastDomain,
         TAG_PREFIX: config.tagPrefix,
-        PREBUILD: config.prebuild,
+    };
+    const present = Object.fromEntries(Object.entries(required).filter(([, v]) => v !== undefined && v !== null));
+    return {
+        ...present,
+        PREBUILD: config.prebuild ?? '',
         SPARKLE_TOOLS_VERSION,
         ...architectureVars(config),
     };

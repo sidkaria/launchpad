@@ -70,20 +70,27 @@ export function currentBranch(repo: string): string | null {
  *   4. `main`. A guess, and labelled as one by the caller.
  */
 export function defaultBranch(repo: string): string {
+  return defaultBranchWithSource(repo).branch;
+}
+
+/** Where `defaultBranch` got its answer — said to the user, because the last one is a guess. */
+export type DefaultBranchSource = 'remote' | 'current' | 'mainline' | 'only' | 'guess';
+
+export function defaultBranchWithSource(repo: string): { branch: string; source: DefaultBranchSource } {
   const remoteHead = /^ref:\s*refs\/remotes\/origin\/(.+)$/m
     .exec(read(repo, '.git/refs/remotes/origin/HEAD').trim())?.[1];
-  if (remoteHead) return remoteHead;
+  if (remoteHead) return { branch: remoteHead, source: 'remote' };
 
   const branches = localBranches(repo);
   const mainlines = MAINLINE.filter(m => branches.includes(m));
 
   const current = currentBranch(repo);
-  if (current && MAINLINE.includes(current)) return current;
-  if (mainlines.length) return mainlines[0];
+  if (current && MAINLINE.includes(current)) return { branch: current, source: 'current' };
+  if (mainlines.length) return { branch: mainlines[0], source: 'mainline' };
   // A repo with one branch and a non-standard name (`live`, `production`) is
   // telling us what its trunk is by having only one.
-  if (branches.length === 1) return branches[0];
-  return 'main';
+  if (branches.length === 1) return { branch: branches[0], source: 'only' };
+  return { branch: 'main', source: 'guess' };
 }
 
 /**

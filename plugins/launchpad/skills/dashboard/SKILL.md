@@ -53,7 +53,9 @@ A **"needs you" strip across the top of every view**, a **side navigation panel 
 
 ### Needs you — the strip above everything
 
-Fleet-wide, persistent, and the first thing on the screen on every view. One line when there is nothing — *"Nothing needs you"* — and grouped cards when there is. `launchpad needs` prints exactly the same list in a terminal, and `--json` gives it as data; the model is `src/needs.ts` and both renderers read it rather than composing their own.
+Persistent, and the first thing on the screen on every view. On the fleet page it is the whole fleet: one line when there is nothing — *"Nothing needs you"* — and grouped cards when there is. `launchpad needs` prints exactly the same list in a terminal, and `--json` gives it as data; the model is `src/needs.ts` and both renderers read it rather than composing their own.
+
+On a **project page** it is that project's rows only — the same items `needs --json` lists with that project among their `projects`, account-wide ones included — and the rest of the fleet as one line, *"14 more across the fleet"*, which links to the fleet page. The fleet-wide list on every page put another project's Android keystore in the first 450px of a Rust CLI's page. The sidebar's count stays the fleet total, because it answers "is anything waiting on me anywhere"; clicking it goes to the fleet page, where that number is the list shown.
 
 Every fact in it already existed somewhere in this product: a missing vault key on the Credentials tab, a `?` row on the scorecard, a cost chip on Decisions, a pipeline with no disposition in `state.yml`, a surface `apply` refuses. **Seven places to look is the same as none** — the thing blocking somebody's first Android build sat three clicks inside a project page, indistinguishable from twelve things that were fine.
 
@@ -100,7 +102,7 @@ The cards carry a **meter**, not a row of per-check dots. The dots said which ch
 
 | Tab | What it holds |
 |---|---|
-| Readiness | this app's checks, criticals first, each with what it costs |
+| Readiness | this app's checks, criticals first, each with what it costs — rows that do not apply (`n/a`) are left off, as `score` leaves them off; the full rubric grid keeps them as slate cells |
 | Build & Release | every detected surface, why it was detected, its full gathered config |
 | **Decisions** | every choice launchpad made **and the reason** |
 | Roadmap | capture → backlog → who runs it → what happened |
@@ -123,6 +125,8 @@ Same backlog, same gate, two executors. Never describe the backlog as belonging 
 The pipelines are commodity. What a buyer pays for is that someone already decided the validate lane runs on ubuntu because macOS runners bill ~10×, that a stock Flutter release build is signed with the debug keystore, and that losing an upload keystore ends that app forever. That screen is the receipt, the teaching, and the argument for the price, all at once.
 
 It distinguishes **"launchpad chose"** from **"yours, kept"**. Those are different promises — blurring them claims credit for the user's own work, or implies launchpad maintains something it never touched.
+
+A default is a choice and is listed like one. A Mac app with no `architectures` (or `arm64`) says *"Apple Silicon only — Intel Macs cannot run it; set `architectures: universal` to include them"*, with no cost and how to reverse it; `universal` gets its own entry. Neither carries a price, so neither is a line in the ledger.
 
 ### What's live where
 

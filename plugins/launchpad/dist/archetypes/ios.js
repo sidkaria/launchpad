@@ -237,7 +237,7 @@ function buildStep(c) {
     // beside the app's, and archiving the `.xcodeproj` alone compiles without
     // every dependency CocoaPods just installed.
     const workspaceLine = isJsFramework(c.framework)
-        ? [`      workspace: "${c.workspace ?? `${c.scheme}.xcworkspace`}",`]
+        ? [`      workspace: "${workspaceArg(c)}",`]
         : [];
     if (signingMode(c) === 'cloud') {
         // Only `xcargs` — gym applies it to both the archive and the export step, so
@@ -271,14 +271,59 @@ function buildStep(c) {
 /** React Native and Expo: the two frameworks whose iOS build starts in node_modules. */
 export const isJsFramework = (f) => f === 'react-native' || f === 'expo';
 /**
- * Where fastlane runs, repo-relative.
- *
- * `<workdir>/ios` for React Native and Expo, because that is where their Xcode
- * workspace lives and where their own template puts `fastlane/` — the layout
- * every RN doc, and every RN repo that already has lanes, assumes. `workdir`
- * itself for Flutter and native, unchanged.
+ * Where the Xcode workspace lives, repo-relative: `<workdir>/ios` for React
+ * Native and Expo, `workdir` itself for Flutter and native.
  */
-export const iosFastlaneDir = (c) => (isJsFramework(c.framework) ? (c.workdir === '.' ? 'ios' : `${c.workdir}/ios`) : c.workdir);
+export const iosNativeDir = (c) => (isJsFramework(c.framework) ? (c.workdir === '.' ? 'ios' : `${c.workdir}/ios`) : c.workdir);
+/**
+ * Where fastlane runs — and so where `fastlane/Fastfile` lives — repo-relative.
+ *
+ * Bare React Native: `<workdir>/ios`, because `ios/` is committed and that is
+ * where its own template puts `fastlane/` — the layout every RN doc, and every
+ * RN repo that already has lanes, assumes.
+ *
+ * **Expo: `<workdir>`, beside `app.json` — never inside `ios/`.** Under
+ * Continuous Native Generation `ios/` is not source: `create-expo-app` puts it
+ * in `.gitignore` ("The android and ios directories are automatically added to
+ * .gitignore when you create a new project" — Expo, *Continuous Native
+ * Generation*), and the workflow's `expo prebuild --clean` DELETES and
+ * regenerates it ("this option will delete and recreate all of your native
+ * project files"). A Fastfile written to `ios/fastlane/` was therefore never
+ * committed in the first place, and would have been deleted by the step
+ * before fastlane even if it had been. The community's Expo + fastlane setups
+ * keep `fastlane/` at the project root for exactly this reason and point
+ * `build_app` at `ios/<App>.xcworkspace` (e.g. Rich Infante, *Local iOS builds
+ * using Expo Prebuild and Fastlane*, 2024). Found by the buyer journey on
+ * `create-t3-turbo` (harvest item 3); the lane has still never run on a runner.
+ *
+ * Flutter and native: `workdir`, unchanged.
+ */
+export const iosFastlaneDir = (c) => (c.framework === 'expo' ? c.workdir : iosNativeDir(c));
+/**
+ * `build_app`'s `workspace:`, relative to where fastlane runs. For Expo that is
+ * the project root, so the workspace is under the `ios/` prebuild generates;
+ * the `workspace` knob itself is always relative to `ios/`.
+ */
+const workspaceArg = (c) => {
+    const ws = c.workspace ?? `${c.scheme}.xcworkspace`;
+    return c.framework === 'expo' ? `ios/${ws}` : ws;
+};
+/**
+ * A launchpad Fastfile an older version wrote INSIDE an Expo app's `ios/`,
+ * where prebuild deletes it, repo-relative — or null. Reported by `apply`
+ * so it can be removed; never deleted by launchpad.
+ */
+export function staleExpoFastfile(repo, c) {
+    if (c.framework !== 'expo')
+        return null;
+    const rel = underWorkdir(iosNativeDir(c), 'fastlane/Fastfile');
+    try {
+        return /launchpad iOS — generated/.test(readFileSync(join(repo, rel), 'utf8')) ? rel : null;
+    }
+    catch {
+        return null;
+    }
+}
 /**
  * Node, the JS install, and CocoaPods — the steps a React Native or Expo build
  * needs before Xcode can do anything, and nothing at all for the other two.
@@ -317,7 +362,7 @@ export function jsSetupSteps(c, stepIf) {
     if (c.framework === 'expo') {
         lines.push('      # Continuous Native Generation: an Expo app has no ios/ directory in', '      # the repository, so CI generates one from app.json and the config', '      # plugins. --clean is what makes that deterministic — Expo documents an', '      # incremental prebuild as able to "layer changes" and not necessarily', '      # produce the same result.', '      - name: Generate the native iOS project (expo prebuild)', ...(stepIf ? [stepIf] : []), `        working-directory: ${jsDir}`, '        run: npx expo prebuild --platform ios --clean --no-install', '');
     }
-    lines.push('      - name: Install CocoaPods dependencies', ...(stepIf ? [stepIf] : []), `        working-directory: ${iosFastlaneDir(c)}`, '        run: |', '          if [ -f Gemfile ] || [ -f ../Gemfile ]; then', '            bundle install', '            bundle exec pod install', '          else', '            pod install', '          fi', '', '');
+    lines.push('      - name: Install CocoaPods dependencies', ...(stepIf ? [stepIf] : []), `        working-directory: ${iosNativeDir(c)}`, '        run: |', '          if [ -f Gemfile ] || [ -f ../Gemfile ]; then', '            bundle install', '            bundle exec pod install', '          else', '            pod install', '          fi', '', '');
     return lines.join('\n');
 }
 function ipaGlob(c) {

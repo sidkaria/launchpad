@@ -98,7 +98,7 @@ So when the repo has no store surface, these appear instead of the store rows:
 
 | | |
 |---|---|
-| **a licence someone else can rely on** | no LICENSE means default copyright: nobody may legally use or depend on it, and for a library that is the silent reason a company never adopts it |
+| **a licence that says who may use it** | no LICENSE means default copyright: nobody may legally use or depend on it, and for a library that is the silent reason a company never adopts it |
 | a README that explains what this is | for anything installed from a registry, the README *is* the product page |
 | a stranger can install it / **it runs somewhere that is not your laptop** | the finish line, in the terms of this project — a registry for a CLI, a deploy for a service, a download for a desktop app |
 
@@ -109,6 +109,8 @@ And the wording of the shared rows changes too: distribution talks about crates.
 **Never read the store rows out to someone whose project has no store.** If the scorecard is not asking about the App Store, neither should you.
 
 Some checks report `?` rather than a pass or a fail — keystore backup and support contact always, and others when the only available evidence is a filename or a config value rather than something observed. No file on disk can prove them, so launchpad will not guess.
+
+A check that does not apply to this project (Flutter's network permission on a native Android app, say) is graded `n/a` and **not printed** — it is not work. `score --json` still carries it, and the dashboard's full rubric grid shows it as a slate cell. Never read an `n/a` row out as something to do.
 
 **`?` is a question, so ask it — and then record the answer.**
 

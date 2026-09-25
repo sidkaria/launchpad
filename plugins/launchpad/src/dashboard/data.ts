@@ -1,5 +1,5 @@
 import { existsSync, readFileSync } from 'node:fs';
-import { homedir } from 'node:os';
+import { launchpadHome } from '../home.js';
 import { join } from 'node:path';
 import { fleet, labelOf, type FleetEntry } from '../registry.js';
 import { readState } from '../state.js';
@@ -225,6 +225,16 @@ export interface ProjectView extends Omit<FleetEntry, 'score'> {
    * decision rather than recording one.
    */
   answered: { id: string; at: string; choice?: string; note?: string }[];
+  /**
+   * The keys of the fleet's `needs` items that are about this project, in the
+   * fleet list's order — `projectNeeds()`, computed here once.
+   *
+   * A project page shows these expanded and the rest of the fleet as one line.
+   * Carried as keys rather than as a second copy of the items so there is one
+   * list and one filter: the page picks rows out of `DashboardData.needs`, and
+   * never decides for itself which item belongs to which project.
+   */
+  needs: string[];
 }
 
 /**
@@ -376,7 +386,7 @@ export function lastNightOf(repo: string): { date?: string; results: TaskResult[
   }
 }
 
-export function dashboardData(home = homedir(), now = new Date()): DashboardData {
+export function dashboardData(home = launchpadHome(), now = new Date()): DashboardData {
   const states = new Map<string, ReturnType<typeof readState>>();
   const projects: ProjectView[] = fleet(home).map(entry => {
     // A directory that is gone cannot be read for anything else, and probing it
@@ -387,7 +397,7 @@ export function dashboardData(home = homedir(), now = new Date()): DashboardData
         surfaces_detail: [], pipelines: [], decisions: [], secrets: [],
         accent: hueOf(labelOf(entry)), live: [],
         assets: { screenshots: 0, featureGraphic: false },
-        ledger: ledgerFor([], []), answered: [],
+        ledger: ledgerFor([], []), answered: [], needs: [],
       };
     }
     const night = lastNightOf(entry.path);
@@ -410,6 +420,7 @@ export function dashboardData(home = homedir(), now = new Date()): DashboardData
       lastNightDate: night.date,
       ledger: ledgerFor([], []),
       answered: safeAnswers(entry.path),
+      needs: [],
     };
   });
 
@@ -436,7 +447,9 @@ export function dashboardData(home = homedir(), now = new Date()): DashboardData
   for (const p of projects) {
     const mine = needsInput.find(n => n.path === p.path);
     if (!mine) continue;
-    p.ledger = ledgerFor([mine], projectNeeds(needs, p.path));
+    const own = projectNeeds(needs, p.path);
+    p.ledger = ledgerFor([mine], own);
+    p.needs = own.map(n => n.key);
   }
 
   const scored = projects.filter(p => p.score);

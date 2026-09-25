@@ -4,6 +4,7 @@ import { fileURLToPath } from 'node:url';
 import { render } from '../templating.js';
 import { writeGuarded } from '../generated.js';
 import { pathGlob, repoRelDir } from './triggers.js';
+import { planSiteBuild } from './sitebuild.js';
 export const SITE_GLOBAL_SECRETS = ['CLOUDFLARE_API_TOKEN', 'CLOUDFLARE_ACCOUNT_ID'];
 const TEMPLATES_DIR = join(dirname(fileURLToPath(import.meta.url)), '..', '..', 'templates', 'site');
 const tmpl = (n) => readFileSync(join(TEMPLATES_DIR, n), 'utf8');
@@ -96,19 +97,32 @@ function siteSitemap(origin) {
  * adding a 404.html there would quietly turn those into dead links.
  */
 const SCAFFOLD = /(^|\/)(index\.html|404\.html|robots\.txt|sitemap\.xml)$/;
-export function planSiteFiles(c) {
+/**
+ * Plan the site's files. `repo`, when given, is read for the facts the build
+ * depends on — which generator, which lockfile, which pinned version. Without
+ * it only the config speaks (a `generator` knob still produces its build).
+ */
+export function planSiteFiles(c, repo) {
+    const build = planSiteBuild(repo, c);
     // `wrangler pages deploy <dir>` wants the root as `.`, not as the empty
     // string — the deploy target and the path filter normalise differently.
+    // A generator site deploys what the generator BUILT, never its source.
     const wfVars = {
         APP_NAME: c.appName,
-        SITE_DIR: repoRelDir(c.siteDir) || '.',
+        SITE_DIR: build ? build.deployDir : (repoRelDir(c.siteDir) || '.'),
         PAGES_PROJECT: c.pagesProject,
         PATHS_FILTER: sitePathsFilter(c.siteDir),
+        CHECKOUT_WITH: build?.checkoutWith ?? '',
+        BUILD_STEPS: build?.steps ?? '',
     };
     const files = [
         { path: `.github/workflows/launchpad-${c.appName}-site.yml`, contents: render(tmpl('release.yml'), wfVars) },
     ];
-    if (c.appcastUrl) {
+    // A generator site's pages are its generator's: an `index.html` dropped into
+    // Jekyll's source is rendered as a page, and one in Hugo's root is ignored.
+    // Either way the scaffold is not what that site's owner would see, so it is
+    // only ever offered to a plain-HTML site.
+    if (c.appcastUrl && !build?.generator) {
         const img = siteOgImage(c);
         files.push({
             path: underDir(c.siteDir, 'index.html'),
@@ -147,6 +161,6 @@ export function planSiteFiles(c) {
  */
 export function writeSiteFiles(repo, c) {
     const siteExists = existsSync(join(repo, underDir(c.siteDir, 'index.html')));
-    const files = planSiteFiles(c).filter(f => !(SCAFFOLD.test(f.path) && (siteExists || existsSync(join(repo, f.path)))));
+    const files = planSiteFiles(c, repo).filter(f => !(SCAFFOLD.test(f.path) && (siteExists || existsSync(join(repo, f.path)))));
     return writeGuarded(repo, files);
 }

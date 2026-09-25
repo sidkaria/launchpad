@@ -55,7 +55,7 @@ with any of these:
 | Hugo, Jekyll, Eleventy, MkDocs, Zola, Hand-written HTML | Static site | Cloudflare Pages |
 | Android (Kotlin / Java) | Android app | Firebase App Distribution on a push, and the AAB Play wants kept on every build.<br>*Distribution needs a Firebase service account and an upload keystore. Without them the build still runs and still passes — the steps that need a credential say they were skipped rather than failing.* |
 | React Native | iOS app + Android app | TestFlight and the App Store for iOS; Firebase App Distribution for Android.<br>*The Android lane has been run end to end against a real app. The iOS lane is generated and reviewed but has not been executed — that needs a macOS runner and an Apple Developer account.* |
-| Expo | iOS app + Android app | TestFlight and the App Store for iOS; Firebase App Distribution for Android.<br>*This is the prebuild route, not EAS Build: no Expo account, no build quota, no third-party bill. EAS remains available to anyone who wants it, and launchpad does not set it up. Two limits said plainly: the iOS lane has not been run (that needs a macOS runner and an Apple Developer account), and if your `android/` is generated rather than committed, launchpad cannot wire release signing into it — prebuild would overwrite it — so that last step is a config plugin you add, or you commit `android/` and launchpad does it.* |
+| Expo | iOS app + Android app | TestFlight and the App Store for iOS; Firebase App Distribution for Android.<br>*This is the prebuild route, not EAS Build: no Expo account, no build quota, no third-party bill. EAS remains available to anyone who wants it, and launchpad does not set it up. Two limits said plainly: the iOS lane has not been run (that needs a macOS runner and an Apple Developer account) — its fastlane lane lives beside `app.json`, not in the `ios/` prebuild regenerates, and that layout is as unobserved as the rest of it — and if your `android/` is generated rather than committed, launchpad cannot wire release signing into it — prebuild would overwrite it — so that last step is a config plugin you add, or you commit `android/` and launchpad does it.* |
 
 **Recognised, with no pipeline** — named, scored in its own terms, on the dashboard, and told plainly that
 there is nothing for `apply` to write: Tauri desktop app, Electron desktop app, Swift package, Ruby on Rails app, Django app, Python web service, Laravel app, Phoenix app, Elixir project, Rust project, Go project, Python package, Ruby gem, .NET project, JVM project, Node CLI, Node package, Containerised service.
@@ -167,6 +167,20 @@ move to a new machine. A key that has validated once **keeps working offline** �
 launchpad cannot reach the licence server, that is our problem and it will not
 become yours.
 
+## Updating
+
+Claude Code installs new versions; launchpad only tells you one exists.
+
+```
+claude plugin update launchpad@launchpad     # then restart Claude Code
+```
+
+`launchpad update` (free) reads the release notes and says whether the version
+you have is missing a fix that matters — "this one is important, not optional"
+when a release fixes a broken pipeline or a data-loss bug. It never installs
+anything, and it never phones home for any other reason. All 1.x releases are
+included in the price.
+
 ## The source is in the box
 
 The package you install contains the TypeScript it was built from, in
@@ -228,7 +242,10 @@ not on the app you are about to ship:
   `build.gradle`, the `fastlane/` directory, and for a Flutter app its dev/prod
   flavours (the Xcode project and schemes, `Info.plist`, the `Podfile`,
   `AndroidManifest.xml`, and a DEV-badged `AppIcon-dev` icon set copied from
-  your `AppIcon` — only ever created, never overwritten). A file you edited by hand is kept and reported, never
+  your `AppIcon` — only ever created, never overwritten). The flavour edits
+  are listed before any is made, and are skipped — said once, recorded as
+  `flavors: false` — for an app that already has flavours, schemes or app
+  extensions of its own. A file you edited by hand is kept and reported, never
   overwritten.
 - `~/.launchpad/projects.json` — the list of projects on your dashboard; paths
   only.

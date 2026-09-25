@@ -1,7 +1,7 @@
 import { randomBytes } from 'node:crypto';
 import { existsSync, readFileSync, rmSync, statSync } from 'node:fs';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
-import { homedir } from 'node:os';
+import { launchpadHome } from '../home.js';
 import { fileURLToPath } from 'node:url';
 import { addIdea, setStatus, isStatus, createTask, setPriority } from '../nightshift/backlog.js';
 import { readConfig, writeConfig } from '../nightshift/config.js';
@@ -106,7 +106,7 @@ export function serve(opts: ServeOptions = {}): Promise<RunningServer> {
   const demo = opts.demo === true;
   // The demo fleet is a HOME, not a code path. Everything downstream of this
   // line is identical to a customer reading their own projects.
-  const home = demo ? materializeDemo(opts.demoRoot) : opts.home ?? homedir();
+  const home = demo ? materializeDemo(opts.demoRoot) : opts.home ?? launchpadHome();
   const host = opts.host ?? '127.0.0.1';
   const replay = demo && opts.replay === true
     ? startReplay(home, {

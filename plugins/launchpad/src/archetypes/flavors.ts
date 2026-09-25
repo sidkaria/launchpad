@@ -378,8 +378,13 @@ export function wireFlutterFlavors(
   repo: string,
   c: FlavorWiringConfig,
   log: (line: string) => void = console.log,
+  opts: { dryRun?: boolean } = {},
 ): string[] {
   const changed: string[] = [];
+  const dry = opts.dryRun === true;
+  if (dry) log = () => {};
+  /** What each patched file WOULD hold, so a dry run can plan what follows from it. */
+  const planned = new Map<string, string>();
   const rel = (p: string) => (c.workdir === '.' ? p : `${c.workdir}/${p}`);
   const patch = (relPath: string, fn: (s: string) => string): void => {
     const abs = join(repo, relPath);
@@ -387,7 +392,8 @@ export function wireFlutterFlavors(
     const orig = readFileSync(abs, 'utf8');
     const next = fn(orig);
     if (next === orig) return;   // unchanged → don't rewrite, don't report
-    writeFileSync(abs, next, 'utf8');
+    if (dry) planned.set(relPath, next);
+    else writeFileSync(abs, next, 'utf8');
     changed.push(relPath);
   };
 
@@ -397,9 +403,26 @@ export function wireFlutterFlavors(
   const manifestRel = rel('android/app/src/main/AndroidManifest.xml');
   const prodLabel = c.androidLabel ?? currentManifestLabel(join(repo, manifestRel));
 
-  patch(rel('android/app/build.gradle.kts'), (s) =>
+  const ktsRel = rel('android/app/build.gradle.kts');
+  patch(ktsRel, (s) =>
     injectAndroidFlavors(s, { appName: c.appName, prodLabel }));
-  patch(manifestRel, injectAndroidManifestLabel);
+  /**
+   * The manifest's `${appLabel}` is only satisfiable when the build file
+   * supplies `manifestPlaceholders["appLabel"]`. A Groovy `build.gradle` is
+   * skipped above, and rewriting the label anyway left every Android build
+   * failing manifest merge on an unknown placeholder — observed on a real
+   * Groovy Flutter app by the buyer journey's replay.
+   */
+  const ktsText = planned.get(ktsRel) ?? (existsSync(join(repo, ktsRel)) ? readFileSync(join(repo, ktsRel), 'utf8') : '');
+  if (/manifestPlaceholders\["appLabel"\]/.test(ktsText)) patch(manifestRel, injectAndroidManifestLabel);
+  else if (existsSync(join(repo, manifestRel)) && readFileSync(join(repo, manifestRel), 'utf8').includes('android:label="${appLabel}"')
+    && !existsSync(join(repo, ktsRel))) {
+    // An older launchpad did exactly that to a Groovy app. Say so; the
+    // manifest is the user's file, so launchpad does not rewrite it back.
+    log(`  ! ${manifestRel} sets android:label="\${appLabel}", and nothing supplies that placeholder`);
+    log('      (a Groovy build.gradle gets no flavours) — every Android build fails at manifest merge.');
+    log('      Put the app\'s own name back in android:label.');
+  }
   // Name the dev icon set only when it exists or can be made from AppIcon.
   const pbxRel = rel('ios/Runner.xcodeproj/project.pbxproj');
   const iosDir = join(repo, rel('ios'));
@@ -422,14 +445,130 @@ export function wireFlutterFlavors(
       const schemeRel = rel(`${SCHEMES_DIR}/${flavor}.xcscheme`);
       const abs = join(repo, schemeRel);
       if (existsSync(abs)) continue;   // never clobber a hand-tuned scheme
-      mkdirSync(dirname(abs), { recursive: true });
-      writeFileSync(abs, iosSchemeXml(flavor, base), 'utf8');
+      if (!dry) {
+        mkdirSync(dirname(abs), { recursive: true });
+        writeFileSync(abs, iosSchemeXml(flavor, base), 'utf8');
+      }
       changed.push(schemeRel);
     }
   }
 
-  changed.push(...ensureFlavorDevIconSet(repo, c, log));
+  changed.push(...ensureFlavorDevIconSet(repo, c, log, { dryRun: dry, pbxproj: planned.get(pbxRel) }));
   return changed;
+}
+
+/**
+ * Every native file wiring the flavours WOULD change or add, repo-relative,
+ * without touching any of them — what `apply` prints before it edits a file
+ * the user wrote. Empty once the flavours are wired.
+ */
+export function planFlutterFlavors(repo: string, c: FlavorWiringConfig): string[] {
+  return [
+    ...wireFlutterFlavors(repo, c, () => {}, { dryRun: true }),
+    ...writeFlavorIconConfig(repo, c, { dryRun: true }),
+  ];
+}
+
+/**
+ * Why this app already has flavours of its own — or a native project shaped by
+ * hand — that launchpad's dev/prod wiring would collide with. Empty for a
+ * project `flutter create` made (or one launchpad itself flavoured).
+ *
+ * Each line is evidence a person can check, never a guess:
+ *
+ * - an Android `productFlavors`/`flavorDimensions` block that is not
+ *   launchpad's own `env` dimension of `dev` + `prod`;
+ * - an iOS build configuration beyond Debug/Release/Profile and launchpad's
+ *   `-dev`/`-prod` clones (`Release-staging` is somebody's flavour);
+ * - a shared scheme beyond `Runner`, `dev` and `prod`;
+ * - an iOS target that is neither the app nor its tests — an app extension's
+ *   bundle id has to be prefixed by the app's, and the dev flavour only moves
+ *   the app's, so its build would fail validation;
+ * - `flutter_flavorizr` config, or `lib/main_<flavour>.dart` entry points.
+ */
+export function ownFlavorEvidence(repo: string, workdir: string): string[] {
+  const rel = (p: string) => (workdir === '.' ? p : `${workdir}/${p}`);
+  const read = (p: string): string => { try { return readFileSync(join(repo, rel(p)), 'utf8'); } catch { return ''; } };
+  const out: string[] = [];
+
+  for (const f of ['android/app/build.gradle.kts', 'android/app/build.gradle']) {
+    const text = read(f);
+    const at = /\bproductFlavors\s*\{/.exec(text);
+    if (!at && !/\bflavorDimensions\b/.test(text)) continue;
+    // launchpad's own: the `env` dimension holding exactly `dev` and `prod`.
+    let ours = false;
+    if (at && /flavorDimensions \+= "env"/.test(text)) {
+      const open = text.indexOf('{', at.index);
+      const block = text.slice(open, matchBrace(text, open, ktSkip) + 1);
+      const names = [...block.matchAll(/create\("([^"]+)"\)/g)].map(m => m[1]).sort();
+      ours = names.join(',') === 'dev,prod';
+    }
+    if (!ours) out.push(`${rel(f)} already declares productFlavors`);
+  }
+
+  const pbx = read('ios/Runner.xcodeproj/project.pbxproj');
+  if (pbx) {
+    const objects = scanPbxObjects(pbx);
+    const stock = new Set(IOS_MODES.flatMap(m => [m, `${m}-dev`, `${m}-prod`]));
+    const configs = [...new Set(objects
+      .filter(o => /\bisa = XCBuildConfiguration;/.test(o.text))
+      .map(o => configName(o.text))
+      .filter((n): n is string => !!n))];
+    const foreign = configs.filter(n => !stock.has(n));
+    if (foreign.length) out.push(`${rel('ios/Runner.xcodeproj')} has build configurations of its own (${foreign.slice(0, 4).join(', ')})`);
+    const extras = objects
+      .filter(o => /\bisa = PBXNativeTarget;/.test(o.text))
+      .filter(o => !/productType = "com\.apple\.product-type\.(application|bundle\.unit-test|bundle\.ui-testing)"/.test(o.text))
+      .map(o => configName(o.text) ?? (o.comment || o.uuid));
+    if (extras.length) out.push(`${rel('ios/Runner.xcodeproj')} has targets besides the app and its tests (${extras.slice(0, 4).join(', ')})`);
+  }
+
+  const schemes = safeLs(join(repo, rel(SCHEMES_DIR)))
+    .filter(f => f.endsWith('.xcscheme'))
+    .map(f => f.replace(/\.xcscheme$/, ''))
+    .filter(n => !['Runner', ...FLAVORS].includes(n));
+  if (schemes.length) out.push(`${rel(SCHEMES_DIR)} has schemes of its own (${schemes.slice(0, 4).join(', ')})`);
+
+  if (existsSync(join(repo, rel('flavorizr.yaml'))) || /^flavorizr\s*:/m.test(read('pubspec.yaml'))) {
+    out.push(`${rel(existsSync(join(repo, rel('flavorizr.yaml'))) ? 'flavorizr.yaml' : 'pubspec.yaml')} configures flutter_flavorizr`);
+  }
+  const mains = safeLs(join(repo, rel('lib'))).filter(f => /^main_[a-z0-9_]+\.dart$/i.test(f));
+  if (mains.length) out.push(`${rel('lib')} has per-flavour entry points (${mains.slice(0, 4).join(', ')})`);
+  return out;
+}
+
+/**
+ * Whether `apply` wires dev/prod flavours into one Flutter app, and why.
+ *
+ * The native edits are the largest launchpad makes to files a user wrote —
+ * the Xcode project, schemes, `Info.plist`, the `Podfile`, the Android build
+ * file and manifest — so they are a knob (`flavors`) with a default decided
+ * from evidence (DECISIONS 2026-09-23):
+ *
+ * 1. `flavors: false` on any surface of the app → off; `true` → on.
+ * 2. Unset, and a surface of this app was wired before → on. That is what
+ *    every existing state has always done, and the injectors are idempotent,
+ *    so an already-flavoured app sees no change.
+ * 3. Unset and never wired: off when the app already has flavours, schemes or
+ *    a hand-shaped Xcode project (`ownFlavorEvidence`), on otherwise — a fresh
+ *    `flutter create` app gets the dev variant the product promises.
+ *
+ * In case 3 the decision is written back as `flavors:` so it is visible in
+ * `state.yml` and does not flip on the next run.
+ */
+export interface FlavorDecision {
+  wire: boolean;
+  why: 'explicit' | 'wired-before' | 'fresh' | 'own-flavors';
+  evidence: string[];
+}
+
+export function flavorDecision(repo: string, workdir: string, surfaces: Surface[]): FlavorDecision {
+  const knobs = surfaces.map(s => (s.config as { flavors?: unknown } | undefined)?.flavors);
+  if (knobs.includes(false)) return { wire: false, why: 'explicit', evidence: [] };
+  if (knobs.includes(true)) return { wire: true, why: 'explicit', evidence: [] };
+  if (surfaces.some(s => s.status === 'wired')) return { wire: true, why: 'wired-before', evidence: [] };
+  const evidence = ownFlavorEvidence(repo, workdir);
+  return evidence.length ? { wire: false, why: 'own-flavors', evidence } : { wire: true, why: 'fresh', evidence: [] };
 }
 
 /** The icon set a Flutter dev flavour names (`flutter_launcher_icons` spells it this way). */
@@ -494,13 +633,14 @@ export function ensureFlavorDevIconSet(
   repo: string,
   c: Pick<FlavorWiringConfig, 'workdir'>,
   log: (line: string) => void = console.log,
+  opts: { dryRun?: boolean; pbxproj?: string } = {},
 ): string[] {
   const rel = (p: string) => (c.workdir === '.' ? p : `${c.workdir}/${p}`);
   const iosDir = join(repo, rel('ios'));
+  // A dry run plans against the pbxproj the wiring WOULD write.
   const projectText = ['ios/Runner.xcodeproj/project.pbxproj', 'ios/project.yml']
-    .map((p) => join(repo, rel(p)))
-    .filter((p) => existsSync(p))
-    .map((p) => readFileSync(p, 'utf8'))
+    .map((p) => (opts.pbxproj !== undefined && p.endsWith('.pbxproj') ? opts.pbxproj
+      : existsSync(join(repo, rel(p))) ? readFileSync(join(repo, rel(p)), 'utf8') : ''))
     .join('\n');
   const wanted = appIconNamesIn(projectText).filter((n) => /-dev$/i.test(n));
 
@@ -517,6 +657,10 @@ export function ensureFlavorDevIconSet(
       continue;
     }
     const out = join(dirname(base), `${name}.appiconset`);
+    if (opts.dryRun) {
+      made.push(rel(`ios/${out.slice(iosDir.length + 1).split(/[\\/]/).join('/')}`));
+      continue;
+    }
     mkdirSync(out, { recursive: true });
     const unbadged: string[] = [];
     for (const file of safeLs(base)) {
@@ -552,7 +696,7 @@ const ICON_PATH_KEYS = ['image_path', 'image_path_android', 'image_path_ios', 'a
  * Returns `[]` (badge skipped) when the app has no `flutter_launcher_icons:`
  * block, and never overwrites an existing dev config.
  */
-export function writeFlavorIconConfig(repo: string, c: FlavorWiringConfig): string[] {
+export function writeFlavorIconConfig(repo: string, c: FlavorWiringConfig, opts: { dryRun?: boolean } = {}): string[] {
   const rel = (p: string) => (c.workdir === '.' ? p : `${c.workdir}/${p}`);
   const pubspecAbs = join(repo, rel('pubspec.yaml'));
   if (!existsSync(pubspecAbs)) return [];
@@ -570,6 +714,7 @@ export function writeFlavorIconConfig(repo: string, c: FlavorWiringConfig): stri
   const outRel = rel('flutter_launcher_icons-dev.yaml');
   const outAbs = join(repo, outRel);
   if (existsSync(outAbs)) return [];   // idempotent: a written config is never regenerated
+  if (opts.dryRun) return [outRel];
 
   for (const key of ICON_PATH_KEYS) {
     const v = block[key];
@@ -598,6 +743,8 @@ function devVariantPath(p: string): string {
 export interface FlavorTarget {
   surfaceId: string;          // the surface the wiring is logged against
   config: FlavorWiringConfig;
+  /** Every surface that builds this app (an ios and an android surface share one). */
+  surfaceIds: string[];
 }
 
 /**
@@ -633,9 +780,10 @@ export function flutterFlavorTargets(repo: string, surfaces: Surface[]): FlavorT
     if (existing) {
       // Later surfaces only fill in what the first one didn't know.
       if (!existing.config.bundleId && bundleId) existing.config.bundleId = bundleId;
+      existing.surfaceIds.push(s.id);
       continue;
     }
-    byWorkdir.set(workdir, { surfaceId: s.id, config: { workdir, appName, bundleId } });
+    byWorkdir.set(workdir, { surfaceId: s.id, config: { workdir, appName, bundleId }, surfaceIds: [s.id] });
   }
   return [...byWorkdir.values()];
 }

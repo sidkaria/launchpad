@@ -98,6 +98,14 @@ export interface AndroidConfig {
   // Gradle's default no-flavour build, so a flavoured app MUST name one. Unset
   // → the pre-flavour build/artifact path, unchanged.
   flavor?: string;
+  /**
+   * flutter: whether `apply` wires launchpad's dev/prod flavours into the app's
+   * native projects (Xcode configs + schemes, Info.plist, Podfile, Android build
+   * file + manifest). Unset → decided from evidence and written back: on for a
+   * fresh app, off when it already has flavours or a hand-shaped Xcode project,
+   * and unchanged for an app wired before (see `flavorDecision`).
+   */
+  flavors?: boolean;
   // Dart define name → CI env var holding its value (see dartDefineArgs). Values
   // are fetched from the environment at build time, never baked into the repo.
   dartDefines?: Record<string, string>;

@@ -76,22 +76,25 @@ export function currentBranch(repo) {
  *   4. `main`. A guess, and labelled as one by the caller.
  */
 export function defaultBranch(repo) {
+    return defaultBranchWithSource(repo).branch;
+}
+export function defaultBranchWithSource(repo) {
     const remoteHead = /^ref:\s*refs\/remotes\/origin\/(.+)$/m
         .exec(read(repo, '.git/refs/remotes/origin/HEAD').trim())?.[1];
     if (remoteHead)
-        return remoteHead;
+        return { branch: remoteHead, source: 'remote' };
     const branches = localBranches(repo);
     const mainlines = MAINLINE.filter(m => branches.includes(m));
     const current = currentBranch(repo);
     if (current && MAINLINE.includes(current))
-        return current;
+        return { branch: current, source: 'current' };
     if (mainlines.length)
-        return mainlines[0];
+        return { branch: mainlines[0], source: 'mainline' };
     // A repo with one branch and a non-standard name (`live`, `production`) is
     // telling us what its trunk is by having only one.
     if (branches.length === 1)
-        return branches[0];
-    return 'main';
+        return { branch: branches[0], source: 'only' };
+    return { branch: 'main', source: 'guess' };
 }
 /**
  * The most recently written tag, and when its ref was written.

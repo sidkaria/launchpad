@@ -639,6 +639,12 @@ aside.drawer.open{transform:none}
 .needshead b{font-size:14px;font-weight:640;letter-spacing:-.018em}
 .needshead .sub{color:var(--muted);font-size:12.5px}
 .needcounts{display:flex;gap:6px;flex-wrap:wrap;min-width:0}
+/* The rest of the fleet, on a project page: one line, and a link. Quiet on
+   purpose — it is the way out to the full list, not a second headline. */
+.needsmore{display:inline-flex;align-items:center;gap:5px;padding:5px 4px 5px 10px;border-radius:8px;
+  font-size:12.3px;color:var(--muted);border:1px solid transparent;min-width:0;
+  transition:color .14s,border-color .14s}
+.needsmore:hover{color:var(--acc);border-color:var(--line2)}
 /* The cost tile's compact form. A button, because it opens the full ledger —
    a total nobody can trace is a total nobody believes. */
 /* It carries a SENTENCE of numbers — "$20 a month · $99 a year · $25 once",
@@ -1214,8 +1220,8 @@ function renderNav() {
     : '';
   $('#navfoot').innerHTML = `
     <div class="row"><button style="display:flex;align-items:center;gap:8px;padding:0"
-        onclick="window.scrollTo({top:0,behavior:'smooth'})"
-        title="Everything waiting on you, at the top of the page">
+        onclick="${VIEW.project ? 'go(null);' : ''}window.scrollTo({top:0,behavior:'smooth'})"
+        title="Everything waiting on you, across the fleet, at the top of the fleet page">
       ${ico('alert', 'sm')}<span><b id="needcount">${t.needsYou}</b> need${t.needsYou === 1 ? 's' : ''} you</span>
     </button></div>
     <div class="row">${ico('moon', 'sm')}<b>${t.readyTonight}</b> running tonight</div>
@@ -1285,10 +1291,12 @@ function renderTop() {
 }
 
 /* ── needs you ───────────────────────────────────────────────────────────
-   The fleet-wide strip. Everything it renders comes out of `DATA.needs`,
-   which is `src/needs.ts` — the page computes no grouping, no price wording
-   and no counts of its own, because three copies of one mapping is three
-   chances for the strip to file something differently from the terminal. */
+   The strip. Everything it renders comes out of `DATA.needs`, which is
+   `src/needs.ts` — the page computes no grouping, no price wording and no
+   counts of its own, because three copies of one mapping is three chances for
+   the strip to file something differently from the terminal. On a project page
+   it narrows to that project's rows (`p.needs`, the keys `projectNeeds()`
+   picked) and says the rest of the fleet in one line. */
 const NEED_ICON = {
   'paste-credential': 'key',
   'confirm': 'help',
@@ -1343,6 +1351,9 @@ const needProgress = n => {
 
 function renderNeedsStrip() {
   const el = $('#needs');
+  const p = cur();
+  if (p) return renderProjectNeeds(el, p);
+  el.dataset.scope = 'fleet';
   const items = DATA.needs || [];
   const ledger = DATA.ledger;
   // An empty list is good news only when something was looked at. With no
@@ -1369,28 +1380,79 @@ function renderNeedsStrip() {
     return;
   }
   el.className = 'needs';
-  const counts = NEED_GROUPS
+  el.innerHTML = `
+    <div class="needshead">
+      <span class="ic">${ico('alert', 'sm')}</span>
+      <b>${items.length} thing${items.length === 1 ? '' : 's'} need${items.length === 1 ? 's' : ''} you</b>
+      <span class="needcounts">${needCounts(items)}</span>
+      <span class="spacer"></span>${costChip(ledger, 'this fleet')}
+    </div>
+    <div class="needbody">${needGroups(items)}</div>`;
+}
+
+/** One pill per group that has anything in it: "3 · blocks a release". */
+function needCounts(items) {
+  return NEED_GROUPS
     .map(([g, label]) => [items.filter(n => n.group === g).length, label])
     .filter(([n]) => n > 0)
     .map(([n, label]) => `<span class="pill">${n} · ${esc(label.toLowerCase())}</span>`)
     .join('');
+}
 
-  const groups = NEED_GROUPS.map(([g, label]) => {
+/** The cards, under their group headings, in `needs.ts`'s order. */
+function needGroups(items) {
+  return NEED_GROUPS.map(([g, label]) => {
     const mine = items.filter(n => n.group === g);
     if (!mine.length) return '';
     return `<div class="needgroup" data-g="${g}">
       <div class="lbl"><i></i>${esc(label)} · ${mine.length}</div>
       ${mine.map((n, i) => needCard(n, i)).join('')}</div>`;
   }).join('');
+}
 
+/**
+ * The strip on a project page: this project's rows, and the fleet as one line.
+ *
+ * The fleet-wide list on every page put another project's Android keystore in
+ * the first 450px of a Rust CLI's page (JOURNEY.md, ledger #27). Everything is
+ * still one click away — the line is a link to the fleet page, where the whole
+ * list is — and the sidebar keeps the fleet total, because that count answers
+ * "is anything waiting on me anywhere", which a project page does not change.
+ *
+ * Which rows belong here is `p.needs`, the keys `projectNeeds()` chose on the
+ * server. An account-wide row (the Apple membership, a Cloudflare token) is on
+ * the page of every project it applies to, exactly as it is in the terminal's
+ * `needs --json` filtered to that project.
+ */
+function renderProjectNeeds(el, p) {
+  el.dataset.scope = 'project';
+  const all = DATA.needs || [];
+  const mine = new Set(p.needs || []);
+  const items = all.filter(n => mine.has(n.key));
+  const rest = all.length - items.length;
+  const fleet = rest > 0
+    ? `<button class="needsmore" onclick="go(null)" title="The full list, on the fleet page">
+        ${rest} ${items.length ? 'more ' : ''}across the fleet${ico('chev', 'sm')}</button>`
+    : '';
+  if (!items.length) {
+    // Not "nothing needs you": that sentence is about the whole fleet, and on a
+    // project launchpad could not read it would be a claim about nothing.
+    el.className = 'needs clear';
+    el.innerHTML = `<div class="needshead">
+      <span class="ic">${ico(p.problem ? 'minus' : 'check', 'sm')}</span>
+      <b>${p.problem ? `Nothing measured on ${esc(p.name)} yet` : `Nothing on ${esc(p.name)} needs you`}</b>
+      <span class="spacer"></span>${fleet}</div>`;
+    return;
+  }
+  el.className = 'needs';
   el.innerHTML = `
     <div class="needshead">
       <span class="ic">${ico('alert', 'sm')}</span>
-      <b>${items.length} thing${items.length === 1 ? '' : 's'} need${items.length === 1 ? 's' : ''} you</b>
-      <span class="needcounts">${counts}</span>
-      <span class="spacer"></span>${costChip(ledger, 'this fleet')}
+      <b>${items.length} thing${items.length === 1 ? '' : 's'} here need${items.length === 1 ? 's' : ''} you</b>
+      <span class="needcounts">${needCounts(items)}</span>
+      <span class="spacer"></span>${fleet}
     </div>
-    <div class="needbody">${groups}</div>`;
+    <div class="needbody">${needGroups(items)}</div>`;
 }
 
 /**
@@ -1783,8 +1845,15 @@ function paneLive() {
 /* ── project panes ───────────────────────────────────────────────────── */
 function paneReadiness(p, pi) {
   if (p.problem) return notOnboarded(p);
-  const order = { gap: 0, unknown: 1, ok: 2, 'n/a': 3 };
-  const checks = [...p.score.checks].sort((a, b) =>
+  const order = { gap: 0, unknown: 1, ok: 2 };
+  /**
+   * `n/a` rows are not on this list. A row about Flutter's network permission on
+   * a native Android app is a row about somebody else's project, and this list
+   * is the one a person works down. They stay in the full rubric grid, where a
+   * slate cell is how a column says "does not apply", and in `score --json`.
+   */
+  const na = p.score.checks.filter(c => c.grade === 'n/a').length;
+  const checks = p.score.checks.filter(c => c.grade !== 'n/a').sort((a, b) =>
     (a.critical && a.grade !== 'ok' ? -1 : 0) - (b.critical && b.grade !== 'ok' ? -1 : 0)
     || order[a.grade] - order[b.grade]);
   return `
@@ -1802,7 +1871,9 @@ function paneReadiness(p, pi) {
           ${c.critical && c.grade !== 'ok' ? '<span class="pill danger" style="margin-left:9px">critical</span>' : ''}
           ${c.grade !== 'ok' && c.detail ? `<p>${esc(c.detail)}</p>` : ''}</span>
         ${ico('chev', 'sm')}
-      </button>`).join('')}</div>`;
+      </button>`).join('')}</div>${na ? `
+    <div class="empty nacount">${ico('minus', 'sm')}${na} more check${na === 1 ? ' does' : 's do'} not apply to this
+      project — the full rubric on the fleet page shows ${na === 1 ? 'it' : 'them'} as slate cells.</div>` : ''}`;
 }
 
 function paneDeploy(p) {

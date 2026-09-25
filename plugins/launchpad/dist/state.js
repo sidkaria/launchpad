@@ -172,3 +172,43 @@ export function mergeState(prev, detected, project) {
 function withCredentials(state) {
     return { ...state, credentialsRequired: requiredVaultKeys(state) };
 }
+/**
+ * The branch field each archetype deploys from. Web apps have none — Vercel's
+ * git integration reads the project's own production branch.
+ */
+export const BRANCH_FIELD = {
+    'static-site': 'productionBranch',
+    ios: 'testBranch',
+    android: 'testBranch',
+};
+/**
+ * Fill every configured surface's missing branch with the repository's own
+ * default branch. Returns `<surface>.<field>` for each one filled.
+ *
+ * The setup skill used to write `main` into every surface, and a repository
+ * whose trunk is `master` or `develop` then deployed every push as a preview —
+ * production never changed — or never shipped a build at all, silently
+ * (harness/journey/JOURNEY.md, harvest item 2). The default branch is a fact
+ * `git.ts` already reads for Nightshift; guessing it is the bug.
+ *
+ * Only an ABSENT value is filled: a branch somebody chose — including a static
+ * site's pre-rename `testBranch` — is theirs, and a surface with no settings
+ * yet is left for the skill to gather.
+ */
+export function fillDefaultBranch(surfaces, branch) {
+    const filled = [];
+    const present = (v) => typeof v === 'string' && v.trim() !== '';
+    for (const s of surfaces) {
+        const field = BRANCH_FIELD[s.archetype];
+        if (!field || !s.config)
+            continue;
+        const c = s.config;
+        if (present(c[field]))
+            continue;
+        if (s.archetype === 'static-site' && present(c.testBranch))
+            continue; // pre-rename spelling
+        c[field] = branch;
+        filled.push(`${s.id}.${field}`);
+    }
+    return filled;
+}

@@ -721,7 +721,7 @@ export function scorecard(repo, st) {
          */
         const LICENCE_FIELD = /"license"\s*:|^\s*license\s*[:=]|<licenses?>|licenses?\s*=/im;
         add({
-            id: 'license-file', title: 'A licence someone else can rely on',
+            id: 'license-file', title: 'A licence that says who may use it',
             ...grade(Boolean(ls(repo, '').find(n => /^(LICENSE|LICENCE|COPYING)(\.(md|txt))?$/i.test(n)))
                 || LICENCE_FIELD.test(deps + read(repo, 'Cargo.toml') + read(repo, 'go.mod') + read(repo, 'pyproject.toml')), eco.ships === 'library' || eco.ships === 'cli'
                 ? 'There is no LICENSE file. Without one, default copyright applies and nobody may legally '
@@ -795,7 +795,7 @@ export function scorecard(repo, st) {
             // Web or static only: no store, no size gate, and the second half of a
             // link's first impression is the preview image, not the favicon.
             ? {
-                id: 'app-icon', title: 'A favicon, and an image links preview with',
+                id: 'app-icon', title: 'A favicon and a link-preview image',
                 ...(!icon
                     ? grade(false, 'No icon or favicon found. Every browser tab, bookmark and shared link shows one, and its '
                         + 'absence is the first thing that reads as unfinished.')
@@ -921,7 +921,13 @@ export function renderScorecard(s) {
     out.push('');
     // Passes last. Someone scanning for what to do next should not have to read
     // past the things that are already fine.
-    const worklist = s.checks.filter(c => c.grade !== 'ok');
+    //
+    // And `n/a` not at all. "· The Flutter release build can reach the network",
+    // printed on a native Android app, is a row about somebody else's project in
+    // the middle of this one's worklist. It stays in `--json` and in the
+    // dashboard's full rubric grid, where a slate cell is how a column says a row
+    // does not apply; a list of what to do has no use for it.
+    const worklist = s.checks.filter(c => c.grade !== 'ok' && c.grade !== 'n/a');
     const done = s.checks.filter(c => c.grade === 'ok');
     for (const c of worklist) {
         if (c === s.next)

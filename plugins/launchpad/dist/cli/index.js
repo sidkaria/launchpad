@@ -4,16 +4,17 @@ import { fileURLToPath } from 'node:url';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { detect } from '../detect.js';
-import { readState, readStateOrError, writeState, mergeState } from '../state.js';
+import { readState, readStateOrError, writeState, mergeState, fillDefaultBranch } from '../state.js';
+import { defaultBranchWithSource, isRepo } from '../git.js';
 import { upsertClaudeMd, writeDeploymentDoc } from '../context.js';
 import { makeVault, detectBackend, requestedBackend, backendLabel, vaultReadCommand, VAULT_BACKEND_ENV, } from '../vault.js';
 import { writeMacosFiles, MACOS_GLOBAL_SECRETS, MACOS_PER_APP_SECRETS } from '../archetypes/macos.js';
 import { wireAutoupdate } from '../archetypes/autoupdate.js';
 import { wireDevBuild, ensureXcodegenScheme } from '../archetypes/devbuild.js';
-import { writeIosFiles, iosSecrets, isWireable } from '../archetypes/ios.js';
+import { writeIosFiles, iosSecrets, isWireable, staleExpoFastfile, iosFastlaneDir } from '../archetypes/ios.js';
 import { writeAndroidFiles, ANDROID_GLOBAL_SECRETS, androidFramework, androidIsWireable, androidRefusal, resolveAndroidConfig, } from '../archetypes/android.js';
 import { isGradleFramework } from '../archetypes/androidgradle.js';
-import { wireFlutterFlavors, writeFlavorIconConfig, flutterFlavorTargets } from '../archetypes/flavors.js';
+import { wireFlutterFlavors, writeFlavorIconConfig, flutterFlavorTargets, flavorDecision, planFlutterFlavors, } from '../archetypes/flavors.js';
 import { writeFlutterValidateFiles } from '../archetypes/mobilevalidate.js';
 import { wireAndroidReleaseSigning, appBuildFile, ownReleaseSigning } from '../archetypes/androidsigning.js';
 import { writeSiteFiles, SITE_GLOBAL_SECRETS } from '../archetypes/site.js';
@@ -154,6 +155,11 @@ function cmdSetup(repo) {
     const det = detect(repo);
     const prev = loadState(repo);
     const state = mergeState(prev, det, basename(repo));
+    // Every surface deploys from the repository's own trunk unless its settings
+    // say otherwise — never from a guessed `main`.
+    const trunk = isRepo(repo) ? defaultBranchWithSource(repo) : null;
+    if (trunk)
+        fillDefaultBranch(state.surfaces, trunk.branch);
     writeState(repo, state);
     // The sync contract is only written when there is actually a backlog to keep
     // in sync — a block describing a task system this repo does not have would be
@@ -190,6 +196,10 @@ function cmdSetup(repo) {
      */
     for (const s of det.skipped ?? []) {
         console.log(`  · skipped ${s.path} (${s.what}) — ${s.why}`);
+    }
+    if (trunk && state.surfaces.length) {
+        const how = { remote: 'what origin says', current: 'the branch checked out', mainline: 'the mainline branch here', only: 'the only branch here', guess: 'a guess — no branch exists yet' }[trunk.source];
+        console.log(`  Default branch: \`${trunk.branch}\` (${how}). Surfaces deploy from it unless their settings name another.`);
     }
     console.log('Wrote .launchpad/state.yml, .launchpad/DEPLOYMENT.md, and updated CLAUDE.md.');
     /**
@@ -756,7 +766,8 @@ function whereItRuns(repo, st) {
                     out.push(field === 'testBranch'
                         ? '      So no build will ever go out.'
                         : '      So every push deploys as a preview, and production never changes.');
-                    out.push(`      Set ${field}: ${branches.includes('main') ? 'main' : branches[0]} on that surface in .launchpad/state.yml and run apply again.`);
+                    const trunk = defaultBranchWithSource(repo).branch;
+                    out.push(`      Set ${field}: ${branches.includes(trunk) ? trunk : branches.includes('main') ? 'main' : branches[0]} on that surface in .launchpad/state.yml and run apply again.`);
                 }
             }
         }
@@ -780,6 +791,19 @@ function cmdApply(repo) {
     // The cheap analyze/test workflow belongs to the Flutter APP, not the surface:
     // ios + android surfaces sharing `apps/mobile` must produce ONE file.
     const validatedWorkdirs = new Set();
+    /**
+     * A surface whose settings name no branch deploys from the repository's own
+     * default branch, and is told so once. Never `main` by assumption: on a
+     * `master` or `develop` repository that meant every push deployed as a
+     * preview and production never changed.
+     */
+    const trunk = isRepo(repo) ? defaultBranchWithSource(repo).branch : null;
+    if (trunk) {
+        for (const f of fillDefaultBranch(st.surfaces, trunk)) {
+            const [id, field] = f.split('.');
+            console.log(`  · ${id}: ${field} was not set — using \`${trunk}\`, this repository's default branch.`);
+        }
+    }
     for (const s of st.surfaces) {
         try {
             /**
@@ -838,6 +862,11 @@ function cmdApply(repo) {
                     continue;
                 }
                 res = writeIosFiles(repo, cfg);
+                const stale = staleExpoFastfile(repo, cfg);
+                if (stale) {
+                    console.log(`  ⚠ ${s.id}: ${stale} is an older launchpad lane inside ios/, which \`expo prebuild --clean\` deletes`);
+                    console.log(`      on every run. The lane now lives in ${iosFastlaneDir(cfg) === '.' ? '' : `${iosFastlaneDir(cfg)}/`}fastlane/Fastfile; delete the old one (launchpad never deletes your files).`);
+                }
                 if (cfg.framework === 'native') {
                     const scheme = ensureXcodegenScheme(repo, cfg.scheme);
                     if (scheme.length)
@@ -958,12 +987,41 @@ function cmdApply(repo) {
             const target = flavorTargets.find(t => t.surfaceId === s.id);
             if (target && !flavoredWorkdirs.has(target.config.workdir)) {
                 flavoredWorkdirs.add(target.config.workdir);
-                const changed = [
-                    ...wireFlutterFlavors(repo, target.config),
-                    ...writeFlavorIconConfig(repo, target.config),
-                ];
-                if (changed.length)
-                    console.log(`  + ${s.id} flavors: updated ${changed.join(', ')}`);
+                /**
+                 * Dev/prod flavours edit native files the user wrote — the Xcode project
+                 * and schemes, Info.plist, the Podfile, the Android build file and
+                 * manifest — so whether to is decided from evidence, written back, and
+                 * the files are NAMED before a byte of them changes.
+                 */
+                const app = st.surfaces.filter(x => target.surfaceIds.includes(x.id));
+                const decision = flavorDecision(repo, target.config.workdir, app);
+                if (decision.why === 'fresh' || decision.why === 'own-flavors') {
+                    for (const x of app)
+                        if (x.config)
+                            x.config.flavors = decision.wire;
+                }
+                if (!decision.wire) {
+                    if (decision.why === 'own-flavors') {
+                        console.log(`  · ${s.id}: this app already has flavours of its own (${decision.evidence[0]}${decision.evidence.length > 1 ? `; +${decision.evidence.length - 1} more` : ''}),`);
+                        console.log('      so launchpad did not add dev/prod ones — recorded as `flavors: false`. Set `flavor:` to the one');
+                        console.log('      CI should build; `flavors: true` on the surface wires launchpad\'s anyway.');
+                    }
+                }
+                else {
+                    const plan = planFlutterFlavors(repo, target.config);
+                    if (plan.length) {
+                        const verb = (p) => (existsSync(join(repo, p)) ? 'edit' : 'add');
+                        console.log(`  ~ ${s.id} flavors: wiring dev/prod flavours (\`flavors: false\` on the surface turns this off). About to change:`);
+                        for (const p of plan)
+                            console.log(`      ${verb(p)} ${p}`);
+                    }
+                    const changed = [
+                        ...wireFlutterFlavors(repo, target.config),
+                        ...writeFlavorIconConfig(repo, target.config),
+                    ];
+                    if (changed.length)
+                        console.log(`  + ${s.id} flavors: updated ${changed.join(', ')}`);
+                }
             }
             s.status = 'wired';
             wired++;

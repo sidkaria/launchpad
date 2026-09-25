@@ -11,7 +11,7 @@ export interface MacosConfig {
   r2Bucket: string;      // e.g. myapp-updates
   appcastDomain: string; // R2 custom domain, e.g. updates.myapp.com
   tagPrefix: string;     // e.g. "v"
-  prebuild: string;      // e.g. "xcodegen generate" or ""
+  prebuild?: string;     // e.g. "xcodegen generate"; absent or "" → no prebuild step
   appSourceDir?: string; // app target's source dir (e.g. "apps/Sender") — where SparkleUpdater.swift + Info.plist live
   publicEdKey?: string;  // per-app Sparkle public key (set by setup after generate_keys)
   /**
@@ -107,15 +107,32 @@ function loadTemplate(name: string): string {
   return readFileSync(join(TEMPLATES_DIR, name), 'utf8');
 }
 
+/**
+ * The template's variables. An absent OPTIONAL step renders as nothing; an
+ * absent REQUIRED field is left out entirely, so `render` refuses it by name
+ * ("missing template variable {{SCHEME}}") instead of writing the word.
+ *
+ * `prebuild` was passed straight through, and a config without one — which is
+ * every macOS app that is not xcodegen-generated, and exactly what
+ * `verify-package.mjs` exercises — rendered the literal line `undefined` into
+ * `create-dmg.sh`, which under `set -e` is "command not found" and the end of
+ * the release (JOURNEY harvest item 4).
+ */
 function templateVars(config: MacosConfig): Record<string, string> {
-  return {
+  const required = {
     APP_NAME: config.appName,
     SCHEME: config.scheme,
     XCODEPROJ: config.xcodeproj,
     R2_BUCKET: config.r2Bucket,
     APPCAST_DOMAIN: config.appcastDomain,
     TAG_PREFIX: config.tagPrefix,
-    PREBUILD: config.prebuild,
+  };
+  const present = Object.fromEntries(
+    Object.entries(required).filter(([, v]) => v !== undefined && v !== null),
+  ) as Record<string, string>;
+  return {
+    ...present,
+    PREBUILD: config.prebuild ?? '',
     SPARKLE_TOOLS_VERSION,
     ...architectureVars(config),
   };

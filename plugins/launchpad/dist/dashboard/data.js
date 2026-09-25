@@ -1,5 +1,5 @@
 import { existsSync, readFileSync } from 'node:fs';
-import { homedir } from 'node:os';
+import { launchpadHome } from '../home.js';
 import { join } from 'node:path';
 import { fleet, labelOf } from '../registry.js';
 import { readState } from '../state.js';
@@ -142,7 +142,7 @@ export function lastNightOf(repo) {
         return { results: [] };
     }
 }
-export function dashboardData(home = homedir(), now = new Date()) {
+export function dashboardData(home = launchpadHome(), now = new Date()) {
     const states = new Map();
     const projects = fleet(home).map(entry => {
         // A directory that is gone cannot be read for anything else, and probing it
@@ -153,7 +153,7 @@ export function dashboardData(home = homedir(), now = new Date()) {
                 surfaces_detail: [], pipelines: [], decisions: [], secrets: [],
                 accent: hueOf(labelOf(entry)), live: [],
                 assets: { screenshots: 0, featureGraphic: false },
-                ledger: ledgerFor([], []), answered: [],
+                ledger: ledgerFor([], []), answered: [], needs: [],
             };
         }
         const night = lastNightOf(entry.path);
@@ -176,6 +176,7 @@ export function dashboardData(home = homedir(), now = new Date()) {
             lastNightDate: night.date,
             ledger: ledgerFor([], []),
             answered: safeAnswers(entry.path),
+            needs: [],
         };
     });
     /**
@@ -202,7 +203,9 @@ export function dashboardData(home = homedir(), now = new Date()) {
         const mine = needsInput.find(n => n.path === p.path);
         if (!mine)
             continue;
-        p.ledger = ledgerFor([mine], projectNeeds(needs, p.path));
+        const own = projectNeeds(needs, p.path);
+        p.ledger = ledgerFor([mine], own);
+        p.needs = own.map(n => n.key);
     }
     const scored = projects.filter(p => p.score);
     let backend = 'file';
